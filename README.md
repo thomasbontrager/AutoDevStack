@@ -1,46 +1,12 @@
-# AutoDevStack
+## Demo
 
-🚀 **Generate full dev stacks instantly!** Scaffold React, Node, T3 templates in seconds—no more boilerplate headaches.
+![Demo GIF](link_to_your_gif.gif)
 
-![Demo](demo.gif)
-
-## Installation
+### Usage Example
 
 ```bash
-git clone https://github.com/thomasbontrager/AutoDevStack.git
-cd AutoDevStack
-npm install
-chmod +x index.js
+# Example command for using the tool
+./your_command_here
 ```
 
-## Usage
-
-Run the CLI:
-
-```bash
-node index.js
-# or link globally: npm link
-# then: autodevstack
-```
-
-Choose your stack, enter a project name, and boom—your project is ready!
-
-## Supported Stacks
-
-- React + TypeScript + Vite
-
-(More coming soon: Node/Express, T3, etc.)
-
-## Contributing
-
-We'd love your help! Add new templates or improve the CLI.
-
-1. Fork the repo
-2. Create a feature branch
-3. Submit a PR
-
-Star this repo if it saves you time! ⭐
-
-## License
-
-MIT
+> Note: A visual demo is available to showcase the functionality of the project.
