@@ -10,6 +10,7 @@ This directory contains reference projects scaffolded with AutoDevStack, demonst
 | [`ai-app/`](ai-app/) | AI App | Full-stack AI app with LangChain, OpenAI/Anthropic, and streaming |
 | [`api/`](api/) | Node + Express | REST API with JWT auth, Zod validation, and Prisma ORM |
 | [`weather-dashboard/`](weather-dashboard/) | Vanilla JS | Responsive weather dashboard — geolocation, 5-day forecast, unit toggle, search history |
+| [`colicode/`](colicode/) | Node.js CLI + Express | AI coding assistant — PR analysis via GitHub API, code review & suggestions via OpenAI, private key handling |
 
 ## Contributing an Example
 

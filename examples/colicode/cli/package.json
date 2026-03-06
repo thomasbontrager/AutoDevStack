@@ -1,0 +1,20 @@
+{
+  "name": "colicode",
+  "version": "1.0.0",
+  "description": "ColiCode — AI-powered PR analysis and code review CLI",
+  "type": "module",
+  "bin": {
+    "colicode": "./index.js"
+  },
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "chalk": "^5.3.0",
+    "dotenv": "^16.4.5",
+    "ora": "^8.2.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
