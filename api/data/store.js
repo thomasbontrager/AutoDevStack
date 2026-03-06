@@ -7,7 +7,7 @@ function read() {
   try {
     return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
   } catch {
-    return { users: [], projects: [], deployments: [] };
+    return { users: [], projects: [], deployments: [], subscriptions: [], invoices: [] };
   }
 }
 
@@ -51,6 +51,39 @@ function createDeployment(deployment) {
   return deployment;
 }
 
+function getSubscriptionByUsername(username) {
+  const db = read();
+  const subs = db.subscriptions || [];
+  return subs.find(s => s.username === username) || null;
+}
+
+function upsertSubscription(subscription) {
+  const db = read();
+  if (!db.subscriptions) db.subscriptions = [];
+  const idx = db.subscriptions.findIndex(s => s.username === subscription.username);
+  if (idx >= 0) {
+    db.subscriptions[idx] = subscription;
+  } else {
+    db.subscriptions.push(subscription);
+  }
+  write(db);
+  return subscription;
+}
+
+function getInvoicesByUsername(username) {
+  const db = read();
+  const invoices = db.invoices || [];
+  return invoices.filter(i => i.username === username);
+}
+
+function createInvoice(invoice) {
+  const db = read();
+  if (!db.invoices) db.invoices = [];
+  db.invoices.push(invoice);
+  write(db);
+  return invoice;
+}
+
 module.exports = {
   getUsers,
   getUserByUsername,
@@ -59,4 +92,8 @@ module.exports = {
   createProject,
   getDeployments,
   createDeployment,
+  getSubscriptionByUsername,
+  upsertSubscription,
+  getInvoicesByUsername,
+  createInvoice,
 };
