@@ -51,6 +51,17 @@ function createDeployment(deployment) {
   return deployment;
 }
 
+function updateDeployment(id, fields) {
+  const db = read();
+  const idx = db.deployments.findIndex(d => d.id === id);
+  if (idx !== -1) {
+    db.deployments[idx] = { ...db.deployments[idx], ...fields };
+    write(db);
+    return db.deployments[idx];
+  }
+  return null;
+}
+
 module.exports = {
   getUsers,
   getUserByUsername,
@@ -59,4 +70,5 @@ module.exports = {
   createProject,
   getDeployments,
   createDeployment,
+  updateDeployment,
 };

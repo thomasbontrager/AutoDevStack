@@ -1,0 +1,14 @@
+{
+  "name": "autodevstack-build-server",
+  "version": "1.0.0",
+  "description": "Build server for AutoDevStack – clones a Git repo, builds a Docker image, and runs the container",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "license": "MIT"
+}
