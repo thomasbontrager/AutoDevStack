@@ -5,12 +5,19 @@
 Stop copy-pasting boilerplate. AutoDevStack is a zero-config CLI that spins up battle-tested project templates so you can focus on building features from minute one.
 
 [![npm version](https://img.shields.io/npm/v/autodevstack)](https://www.npmjs.com/package/autodevstack)
+[![npx autodevstack](https://img.shields.io/badge/npx-autodevstack-brightgreen)](https://www.npmjs.com/package/autodevstack)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 ---
 
 ## Demo
+
+**One-command SaaS generation:**
+```bash
+npx autodevstack my-saas --template saas --git --docker
+```
+That's it — a full SaaS project with auth, billing, database, Docker, and Git is ready in seconds. See [`examples/saas-demo/`](examples/saas-demo/) for an example.
 
 **Interactive mode:**
 ```
@@ -72,6 +79,21 @@ npx autodevstack --help
 - 🔒 **`.gitignore` handling** — template `_gitignore` files are renamed on copy
 - 🚢 **Deploy subcommand** — push builds to the AutoDevStack build server
 - 🌐 **Domain management** — register and manage custom domains via the platform API
+
+---
+
+## Why AutoDevStack?
+
+| Feature | AutoDevStack | Create React App | Next.js CLI | T3 CLI |
+|---------|:------------:|:----------------:|:-----------:|:------:|
+| Multiple templates | ✅ | ❌ | ❌ | ❌ |
+| SaaS starter (auth + billing + DB) | ✅ | ❌ | ❌ | ❌ |
+| Docker support (`--docker`) | ✅ | ❌ | ❌ | ❌ |
+| Git initialization (`--git`) | ✅ | ❌ | ❌ | ✅ |
+| Monorepo scaffold | ✅ | ❌ | ❌ | ❌ |
+| AI app template | ✅ | ❌ | ❌ | ❌ |
+| Plugin system | ✅ | ❌ | ❌ | ❌ |
+| Non-interactive (full CLI flags) | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
