@@ -109,7 +109,7 @@ function showHelp() {
   console.log(chalk.cyan("  autodevstack plugin list\n"));
 
   console.log(chalk.yellow.bold("AVAILABLE STACKS:"));
-  Object.entries(stacksMap).forEach(([name, key]) => {
+  Object.entries(stacks).forEach(([name, key]) => {
     console.log(chalk.white(`  ${key.padEnd(12)} - ${name}`));
   });
 
@@ -338,13 +338,6 @@ async function handleCreate(args) {
     process.exit(0);
   }
 
-  // Git initialization
-  if (flags.git) {
-    const gitSpinner = ora('Initializing Git repository...').start();
-    try {
-      const originalDir = process.cwd();
-      process.chdir(projectDir);
-
   // Build all available stack choices (built-in + plugins)
   const allStackChoices = [
     ...Object.keys(stacks),
@@ -442,7 +435,6 @@ async function handleCreate(args) {
       pkg.name = projectName;
       fs.writeJsonSync(pkgPath, pkg, { spaces: 2 });
     }
-  }
 
     spinner.succeed(chalk.green(`Project "${projectName}" created successfully!`));
   } catch (err) {
@@ -606,9 +598,6 @@ async function handlePluginAdd(pluginName) {
       console.log(chalk.red(`\n❌ Local path "${sourcePath}" does not exist.\n`));
       process.exit(1);
     }
-    addPlugin(pluginName);
-    return;
-  }
 
     const manifestPath = path.join(sourcePath, 'plugin.json');
     if (!fs.existsSync(manifestPath)) {
@@ -623,9 +612,6 @@ async function handlePluginAdd(pluginName) {
       console.log(chalk.red('\n❌ plugin.json is not valid JSON.\n'));
       process.exit(1);
     }
-    removePlugin(pluginName);
-    return;
-  }
 
     const destName = manifest.name || path.basename(sourcePath);
     const destPath = path.join(pluginsDir, destName);
@@ -662,12 +648,6 @@ async function handlePluginAdd(pluginName) {
       if (!fs.existsSync(manifestPath)) {
         throw new Error(`"${pluginName}" does not appear to be a valid AutoDevStack plugin (missing plugin.json).`);
       }
-    } else {
-      console.log(chalk.white(`  ${entry.name}`));
-    }
-  }
-  console.log();
-}
 
       const manifest = fs.readJsonSync(manifestPath);
       const destName = manifest.name || pluginName;
