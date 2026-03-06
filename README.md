@@ -1,10 +1,16 @@
 # AutoDevStack
 
-🚀 **Generate full dev stacks instantly!** Scaffold React, Node, Next.js, and T3 Stack templates in seconds — no more boilerplate headaches.
+> **Scaffold production-ready full-stack projects in seconds — not hours.**
+
+Stop copy-pasting boilerplate. AutoDevStack is a zero-config CLI that spins up battle-tested project templates so you can focus on building features from minute one.
+
+[![npm version](https://img.shields.io/npm/v/autodevstack)](https://www.npmjs.com/package/autodevstack)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
+
+---
 
 ## Demo
-
-> Run the CLI and follow the prompts to scaffold your project in seconds.
 
 ```
 🚀 Welcome to AutoDevStack! 🚀
@@ -30,55 +36,136 @@ Next steps:
 Happy coding! 🎉
 ```
 
+---
+
+## Features
+
+- ⚡ **Instant scaffolding** — project ready in under 5 seconds
+- 🎯 **Curated templates** — hand-crafted, opinionated starters that just work
+- 🔧 **Zero config** — sensible defaults out of the box
+- 🔌 **Plugin-ready** — extend with community or custom plugins (see [`plugins/`](plugins/))
+- 📦 **Auto name injection** — project name is set in `package.json` automatically
+- 🔒 **`.gitignore` handling** — template `_gitignore` files are renamed on copy
+
+---
+
 ## Quick Start
 
+**Option 1 — Run directly with npx (once published):**
+
 ```bash
-# Clone the repo
+npx autodevstack
+```
+
+**Option 2 — Clone and run locally:**
+
+```bash
 git clone https://github.com/thomasbontrager/AutoDevStack.git
 cd AutoDevStack
 npm install
-chmod +x index.js
-node index.js
+node cli/index.js
 ```
 
-Or use it globally after linking:
+**Option 3 — Global install via npm link:**
 
 ```bash
+git clone https://github.com/thomasbontrager/AutoDevStack.git
+cd AutoDevStack
+npm install
 npm link
 autodevstack
 ```
 
-## Supported Stacks
+---
 
-| Stack | Template | Description |
-|-------|----------|-------------|
-| React + TypeScript + Vite | `default` | Fast React SPA with Vite bundler |
-| Node + Express + TypeScript | `node` | REST API server with Express |
-| Next.js | `next` | Full-stack React framework |
-| T3 Stack | `t3` | Next.js + Tailwind + tRPC + Prisma |
+## Templates
+
+Templates live in the [`templates/`](templates/) directory. Each template is a self-contained minimal project.
+
+| Stack | Folder | Description |
+|-------|--------|-------------|
+| React + TypeScript + Vite | [`templates/default/`](templates/default/) | Fast React SPA with Vite bundler and TypeScript |
+| Node + Express + TypeScript | [`templates/node/`](templates/node/) | Lightweight REST API server |
+| Next.js | [`templates/next/`](templates/next/) | Full-stack React framework with file-based routing |
+| T3 Stack | [`templates/t3/`](templates/t3/) | Next.js + Tailwind CSS + tRPC + Prisma |
+
+### Adding a Template
+
+1. Create a folder under `templates/<your-template>/` with a working project structure.
+2. Register it in [`cli/index.js`](cli/index.js) inside the `stacks` object.
+3. Test it with `node cli/index.js`.
+
+---
+
+## Example Projects
+
+The [`examples/`](examples/) directory contains reference projects built with AutoDevStack to showcase real-world usage patterns.
+
+---
+
+## Project Structure
+
+```
+AutoDevStack/
+├── cli/            # CLI entry point
+│   └── index.js
+├── templates/      # Project scaffolding templates
+│   ├── default/    # React + TypeScript + Vite
+│   ├── node/       # Node + Express + TypeScript
+│   ├── next/       # Next.js
+│   └── t3/         # T3 Stack
+├── examples/       # Example projects built with AutoDevStack
+├── docs/           # Extended documentation
+├── plugins/        # Plugin system (extensibility)
+├── scripts/        # Utility and automation scripts
+├── tests/          # Test suite
+├── CONTRIBUTING.md
+├── CODE_OF_CONDUCT.md
+├── ROADMAP.md
+├── SECURITY.md
+└── LICENSE
+```
+
+---
+
+## Roadmap
+
+See [ROADMAP.md](ROADMAP.md) for the full versioned roadmap.
+
+**Highlights:**
+- SvelteKit and Remix templates
+- NestJS backend template
+- Docker support for all stacks
+- `npm init autodevstack` support
+- Interactive configuration (database, auth, etc.)
+- npm registry publish
+
+---
 
 ## Contributing
 
-We'd love your help! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+We'd love your help! See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
 
 1. Fork the repo
 2. Create a feature branch (`git checkout -b feat/my-stack`)
 3. Add your template under `templates/<name>/`
-4. Register it in `index.js`
+4. Register it in `cli/index.js`
 5. Submit a PR 🎉
 
-## Future Roadmap
+Please read our [Code of Conduct](CODE_OF_CONDUCT.md) before contributing.
 
-- [ ] SvelteKit template
-- [ ] Remix template
-- [ ] NestJS template
-- [ ] Docker support for all stacks
-- [ ] Interactive stack configuration (database choice, auth, etc.)
-- [ ] `npm init autodevstack` support
-- [ ] Published to npm registry
+---
 
-Star this repo if it saves you time! ⭐
+## Security
+
+Found a vulnerability? Please see [SECURITY.md](SECURITY.md) for responsible disclosure guidelines.
+
+---
 
 ## License
 
 MIT — see [LICENSE](LICENSE)
+
+---
+
+⭐ Star this repo if it saves you time!
