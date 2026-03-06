@@ -4,6 +4,7 @@ import inquirer from 'inquirer';
 import chalk from 'chalk';
 import ora from 'ora';
 import path from 'path';
+import os from 'os';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 import { createRequire } from 'module';
@@ -37,47 +38,37 @@ export const stackAliases = {
   'ai': 'ai',
 };
 
-// Parse command-line arguments
-function parseArgs() {
-  const args = process.argv.slice(2);
-  const flags = {
-    projectName: null,
-    stack: null,
-    template: null,
-    git: false,
-    docker: false,
-    ai: false,
-    register: false,
-    apiUrl: null,
-    help: false,
-  };
+// Plugin registry – populated by loadPlugins() at startup
+const pluginTemplates = {};
+const pluginAliases = {};
 
 // Load plugins from the plugins/ directory
 function loadPlugins() {
   const pluginsDir = path.join(__dirname, '..', 'plugins');
   if (!fs.existsSync(pluginsDir)) return;
 
-    if (arg === '--help' || arg === '-h') {
-      flags.help = true;
-    } else if (arg === '--stack' && args[i + 1]) {
-      flags.stack = args[i + 1];
-      i++;
-    } else if (arg === '--template' && args[i + 1]) {
-      flags.template = args[i + 1];
-      i++;
-    } else if (arg === '--git') {
-      flags.git = true;
-    } else if (arg === '--docker') {
-      flags.docker = true;
-    } else if (arg === '--ai') {
-      flags.ai = true;
-    } else if (arg === '--register') {
-      flags.register = true;
-    } else if (arg === '--api-url' && args[i + 1]) {
-      flags.apiUrl = args[i + 1];
-      i++;
-    } else if (!arg.startsWith('-') && !flags.projectName) {
-      flags.projectName = arg;
+  const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const manifestPath = path.join(pluginsDir, entry.name, 'plugin.json');
+    if (!fs.existsSync(manifestPath)) continue;
+    try {
+      const manifest = fs.readJsonSync(manifestPath);
+      if (!Array.isArray(manifest.templates)) continue;
+      for (const tpl of manifest.templates) {
+        if (!tpl.key) continue;
+        const tplPath = tpl.path
+          ? path.resolve(pluginsDir, entry.name, tpl.path)
+          : path.join(pluginsDir, entry.name, 'templates', tpl.key);
+        pluginTemplates[tpl.name || tpl.key] = {
+          key: tpl.key,
+          path: tplPath,
+          plugin: manifest.name || entry.name,
+        };
+        pluginAliases[tpl.key.toLowerCase()] = tpl.key;
+      }
+    } catch {
+      // skip invalid plugin manifests
     }
   }
 }
@@ -89,16 +80,20 @@ function showHelp() {
   console.log(chalk.white("Scaffold production-ready full-stack projects in seconds.\n"));
 
   console.log(chalk.yellow.bold("USAGE:"));
-  console.log(chalk.white("  autodevstack [project-name] [options]\n"));
+  console.log(chalk.white("  autodevstack <subcommand> [options]\n"));
+
+  console.log(chalk.yellow.bold("SUBCOMMANDS:"));
+  console.log(chalk.white("  create               Scaffold a new project"));
+  console.log(chalk.white("  template             Manage project templates"));
+  console.log(chalk.white("  ai                   AI-powered app generation (coming soon)"));
+  console.log(chalk.white("  plugin               Manage plugins"));
+  console.log(chalk.white("  domain               Manage custom domains for deployed apps\n"));
 
   console.log(chalk.yellow.bold("OPTIONS:"));
   console.log(chalk.white("  --stack <name>       Specify stack (react, node, next, t3, saas, monorepo, ai)"));
   console.log(chalk.white("  --template <name>    Alias for --stack"));
   console.log(chalk.white("  --git                Initialize Git repository"));
   console.log(chalk.white("  --docker             Add Docker support (Dockerfile + docker-compose.yml)"));
-  console.log(chalk.white("  --ai                 AI-powered app generation (coming soon)"));
-  console.log(chalk.white("  --register           Register project with the AutoDevStack platform API"));
-  console.log(chalk.white("  --api-url <url>      Platform API URL (default: http://localhost:4000)"));
   console.log(chalk.white("  --help, -h           Show this help message\n"));
 
   console.log(chalk.yellow.bold("PLUGIN SUBCOMMANDS:"));
@@ -109,13 +104,17 @@ function showHelp() {
   console.log(chalk.yellow.bold("TEMPLATE SUBCOMMANDS:"));
   console.log(chalk.white("  template list        List all available templates (built-in + plugins)\n"));
 
+  console.log(chalk.yellow.bold("DOMAIN SUBCOMMANDS:"));
+  console.log(chalk.white("  domain add <domain> --project <name>   Connect a custom domain to a project"));
+  console.log(chalk.white("  domain list                            List all configured domains"));
+  console.log(chalk.white("  domain remove <domain>                 Remove a domain mapping\n"));
+
   console.log(chalk.yellow.bold("EXAMPLES:"));
-  console.log(chalk.cyan("  autodevstack my-app"));
-  console.log(chalk.cyan("  autodevstack my-app --stack next"));
-  console.log(chalk.cyan("  autodevstack my-saas --template saas --git --docker"));
-  console.log(chalk.cyan("  autodevstack my-platform --stack monorepo"));
-  console.log(chalk.cyan("  autodevstack --ai"));
-  console.log(chalk.cyan("  autodevstack my-ai-app --stack ai --git --docker\n"));
+  console.log(chalk.cyan("  autodevstack create my-app --stack next"));
+  console.log(chalk.cyan("  autodevstack create my-saas --template saas --git --docker"));
+  console.log(chalk.cyan("  autodevstack domain add example.com --project my-app"));
+  console.log(chalk.cyan("  autodevstack domain list"));
+  console.log(chalk.cyan("  autodevstack plugin add ./my-plugin\n"));
 
   console.log(chalk.yellow.bold("AVAILABLE STACKS:"));
   Object.entries(stacks).forEach(([name, key]) => {
@@ -330,21 +329,32 @@ async function registerWithPlatform(projectName, templateKey, description, apiUr
   return registerData.project;
 }
 
+// ─── Git initialization ───────────────────────────────────────────────────────
 
-
-(async function main() {
-  // Parse CLI arguments
-  let flags, positionals;
+function initGit(projectDir) {
   try {
-    ({ values: flags, positionals } = parseArgs({
-      args: process.argv.slice(2),
-      options: {
-        stack:    { type: 'string',  short: 's' },
-        template: { type: 'string',  short: 't' },
-        ai:       { type: 'boolean' },
-        git:      { type: 'boolean' },
-        docker:   { type: 'boolean' },
-        help:     { type: 'boolean', short: 'h' },
+    execSync('git init', { cwd: projectDir, stdio: 'ignore' });
+    execSync('git add -A', { cwd: projectDir, stdio: 'ignore' });
+    execSync('git commit -m "Initial commit"', { cwd: projectDir, stdio: 'ignore' });
+  } catch {
+    // Git init failures are non-fatal
+  }
+}
+
+// ─── AI project generation ────────────────────────────────────────────────────
+
+async function generateAIProject(flags) {
+  const questions = [];
+
+  if (!flags.projectName) {
+    questions.push({
+      type: 'input',
+      name: 'projectName',
+      message: 'Project name:',
+      validate: (input) => {
+        if (!input.trim()) return 'Project name cannot be empty.';
+        if (!/^[a-z0-9-_]+$/i.test(input.trim())) return 'Project name can only contain letters, numbers, dashes, and underscores.';
+        return true;
       },
     });
   }
@@ -439,7 +449,6 @@ async function registerWithPlatform(projectName, templateKey, description, apiUr
     const readmePath = path.join(projectDir, 'README.md');
     if (fs.existsSync(readmePath)) {
       let readme = fs.readFileSync(readmePath, 'utf8');
-      readme = fs.readFileSync(readmePath, 'utf8');
       readme = readme.replace(
         '# AI App — Generated by AutoDevStack v1.4',
         `# ${projectName}\n\n> ${appDescription}`
@@ -459,6 +468,22 @@ async function registerWithPlatform(projectName, templateKey, description, apiUr
     }
 
     spinner.succeed(chalk.green(`AI project "${projectName}" generated successfully!`));
+
+    console.log(chalk.magenta(`\n✨ Your AI app is ready!\n`));
+    console.log(chalk.bold('Stack:'));
+    console.log(chalk.gray('  • Frontend:    Next.js 15 + Tailwind CSS (port 3000)'));
+    console.log(chalk.gray('  • Backend:     Node.js + Express + Prisma (port 4000)'));
+    console.log(chalk.gray('  • AI Pipeline: LangChain + ' + (aiProvider === 'anthropic' ? 'Anthropic Claude' : 'OpenAI GPT') + ' (port 5000)'));
+    console.log(chalk.gray('  • Database:    PostgreSQL\n'));
+    console.log(chalk.bold('Next steps:'));
+    console.log(chalk.cyan(`  cd ${projectName}`));
+    console.log(chalk.cyan('  cp .env.example .env'));
+    console.log(chalk.cyan(`  # Add your ${aiProvider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'} to .env`));
+    console.log(chalk.cyan('  npm install'));
+    console.log(chalk.cyan('  docker-compose up   # start postgres'));
+    console.log(chalk.cyan('  npm run db:push     # apply schema'));
+    console.log(chalk.cyan('  npm run dev         # start all services'));
+    console.log(chalk.green.bold('\nHappy building! 🤖🎉\n'));
   } catch (err) {
     spinner.fail(chalk.red('Failed to generate AI project.'));
     throw err;
@@ -576,25 +601,20 @@ async function handleCreate(args) {
     }
   }
 
-  console.log(chalk.magenta(`\n✨ Your AI app is ready!\n`));
-  console.log(chalk.bold('Stack:'));
-  console.log(chalk.gray('  • Frontend:    Next.js 15 + Tailwind CSS (port 3000)'));
-  console.log(chalk.gray('  • Backend:     Node.js + Express + Prisma (port 4000)'));
-  console.log(chalk.gray('  • AI Pipeline: LangChain + ' + (aiProvider === 'anthropic' ? 'Anthropic Claude' : 'OpenAI GPT') + ' (port 5000)'));
-  console.log(chalk.gray('  • Database:    PostgreSQL\n'));
-  console.log(chalk.bold('Next steps:'));
-  console.log(chalk.cyan(`  cd ${projectName}`));
-  console.log(chalk.cyan('  cp .env.example .env'));
-  console.log(chalk.cyan(`  # Add your ${aiProvider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'} to .env`));
-  console.log(chalk.cyan('  npm install'));
-  console.log(chalk.cyan('  docker-compose up   # start postgres'));
-  console.log(chalk.cyan('  npm run db:push     # apply schema'));
-  console.log(chalk.cyan('  npm run dev         # start all services'));
-  console.log(chalk.green.bold('\nHappy building! 🤖🎉\n'));
-}
+  const projectDir = path.join(process.cwd(), projectName);
 
+  if (fs.existsSync(projectDir)) {
+    console.log(chalk.red(`\n❌ Folder "${projectName}" already exists. Choose a different name.\n`));
+    process.exit(1);
+  }
 
-(async function main() {
+  if (!fs.existsSync(templatePath)) {
+    console.log(chalk.red(`\n❌ Template "${templateKey}" not found.\n`));
+    process.exit(1);
+  }
+
+  const spinner = ora(`Scaffolding "${projectName}" with ${selectedStack}...`).start();
+
   try {
     fs.copySync(templatePath, projectDir);
 
@@ -605,30 +625,22 @@ async function handleCreate(args) {
       fs.moveSync(gitignoreFrom, gitignoreTo);
     }
 
-    console.log(chalk.green.bold("\n🚀 Welcome to AutoDevStack! 🚀"));
-    console.log(chalk.gray("Scaffold your next project in seconds.\n"));
-
-    // --ai flag: prompt user to describe their app, then scaffold the AI template
-    if (flags.ai) {
-      await generateAIProject(flags);
-      process.exit(0);
+    // Inject project name into package.json
+    const pkgPath = path.join(projectDir, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      const pkg = fs.readJsonSync(pkgPath);
+      pkg.name = projectName;
+      fs.writeJsonSync(pkgPath, pkg, { spaces: 2 });
     }
 
-    // Determine which prompts to show
-    const questions = [];
-
-    if (!flags.projectName) {
-      questions.push({
-        type: 'input',
-        name: 'projectName',
-        message: 'Project name:',
-        validate: (input) => {
-          if (!input.trim()) return 'Project name cannot be empty.';
-          if (!/^[a-z0-9-_]+$/i.test(input.trim())) return 'Project name can only contain letters, numbers, dashes, and underscores.';
-          return true;
-        },
-      });
+    if (flags.docker) {
+      addDockerSupport(projectDir, templateKey);
     }
+
+    spinner.succeed(chalk.green(`Project "${projectName}" created successfully!`));
+  } catch (err) {
+    spinner.fail(chalk.red('Failed to scaffold project.'));
+    throw err;
   }
 
   if (flags.git) {
@@ -867,6 +879,163 @@ async function handlePluginRemove(pluginName) {
   }
 }
 
+// ─── Domain management ────────────────────────────────────────────────────────
+
+function getDomainsFilePath() {
+  const configDir = path.join(os.homedir(), '.autodevstack');
+  fs.ensureDirSync(configDir);
+  return path.join(configDir, 'domains.json');
+}
+
+function readDomains() {
+  const filePath = getDomainsFilePath();
+  if (!fs.existsSync(filePath)) return [];
+  try {
+    return fs.readJsonSync(filePath);
+  } catch {
+    return [];
+  }
+}
+
+function writeDomains(domains) {
+  const filePath = getDomainsFilePath();
+  fs.writeJsonSync(filePath, domains, { spaces: 2 });
+}
+
+function isValidDomain(domain) {
+  // Simple domain validation: hostname with optional subdomains
+  return /^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/i.test(domain);
+}
+
+async function handleDomain(args) {
+  const sub = args[0];
+
+  if (!sub || sub === '--help' || sub === '-h') {
+    console.log(chalk.green.bold('\n🌐 AutoDevStack Domain Manager\n'));
+    console.log(chalk.yellow.bold('USAGE:'));
+    console.log(chalk.white('  autodevstack domain add <domain> --project <name>   Connect a domain to a project'));
+    console.log(chalk.white('  autodevstack domain list                            List all configured domains'));
+    console.log(chalk.white('  autodevstack domain remove <domain>                 Remove a domain mapping\n'));
+    return;
+  }
+
+  if (sub === 'add') {
+    await handleDomainAdd(args.slice(1));
+    return;
+  }
+
+  if (sub === 'list') {
+    handleDomainList();
+    return;
+  }
+
+  if (sub === 'remove') {
+    const domain = args[1];
+    if (!domain) {
+      console.log(chalk.red('\n❌ Please specify a domain to remove.\n'));
+      console.log(chalk.gray('  Usage: autodevstack domain remove <domain>\n'));
+      process.exit(1);
+    }
+    handleDomainRemove(domain);
+    return;
+  }
+
+  console.log(chalk.red(`\n❌ Unknown domain subcommand "${sub}". Try: domain add, domain list, domain remove\n`));
+  process.exit(1);
+}
+
+async function handleDomainAdd(args) {
+  // Parse: <domain> --project <name>
+  let domain = null;
+  let projectName = null;
+
+  for (let i = 0; i < args.length; i++) {
+    if ((args[i] === '--project' || args[i] === '-p') && args[i + 1]) {
+      projectName = args[i + 1];
+      i++;
+    } else if (!args[i].startsWith('-') && !domain) {
+      domain = args[i];
+    }
+  }
+
+  if (!domain) {
+    console.log(chalk.red('\n❌ Please specify a domain name.\n'));
+    console.log(chalk.gray('  Usage: autodevstack domain add <domain> --project <name>\n'));
+    process.exit(1);
+  }
+
+  if (!isValidDomain(domain)) {
+    console.log(chalk.red(`\n❌ "${domain}" is not a valid domain name.\n`));
+    process.exit(1);
+  }
+
+  if (!projectName) {
+    const answers = await inquirer.prompt([
+      {
+        type: 'input',
+        name: 'projectName',
+        message: 'Project name to connect this domain to:',
+        validate: (input) => input.trim() ? true : 'Project name cannot be empty.',
+      },
+    ]);
+    projectName = answers.projectName.trim();
+  }
+
+  const domains = readDomains();
+  const existing = domains.find(d => d.domain === domain);
+  if (existing) {
+    console.log(chalk.yellow(`\n⚠️  Domain "${domain}" is already configured (project: ${existing.projectName}).\n`));
+    console.log(chalk.gray('  Remove it first with: autodevstack domain remove ' + domain + '\n'));
+    process.exit(1);
+  }
+
+  domains.push({ domain, projectName, addedAt: new Date().toISOString() });
+  writeDomains(domains);
+
+  console.log(chalk.green.bold(`\n✅ Domain "${domain}" connected to project "${projectName}"!\n`));
+  console.log(chalk.yellow.bold('DNS Configuration Required:'));
+  console.log(chalk.white('  Add the following DNS records at your domain registrar:\n'));
+  console.log(chalk.cyan('  Type    Name    Value'));
+  console.log(chalk.cyan('  ────────────────────────────────────────────'));
+  console.log(chalk.cyan(`  CNAME   @       ${projectName}.autodevstack.app`));
+  console.log(chalk.cyan(`  CNAME   www     ${projectName}.autodevstack.app\n`));
+  console.log(chalk.gray('  DNS propagation can take up to 48 hours.\n'));
+}
+
+function handleDomainList() {
+  const domains = readDomains();
+
+  if (domains.length === 0) {
+    console.log(chalk.yellow('\n📭 No domains configured.\n'));
+    console.log(chalk.gray('  Add one with: autodevstack domain add <domain> --project <name>\n'));
+    return;
+  }
+
+  console.log(chalk.green.bold(`\n🌐 Configured Domains (${domains.length})\n`));
+  console.log(chalk.white('  Domain'.padEnd(35) + 'Project'.padEnd(25) + 'Added'));
+  console.log(chalk.gray('  ' + '─'.repeat(75)));
+  domains.forEach(d => {
+    const added = new Date(d.addedAt).toLocaleDateString();
+    console.log(chalk.white(`  ${d.domain.padEnd(35)}${d.projectName.padEnd(25)}${added}`));
+  });
+  console.log();
+}
+
+function handleDomainRemove(domain) {
+  const domains = readDomains();
+  const index = domains.findIndex(d => d.domain === domain);
+
+  if (index === -1) {
+    console.log(chalk.red(`\n❌ Domain "${domain}" is not configured.\n`));
+    process.exit(1);
+  }
+
+  const removed = domains.splice(index, 1)[0];
+  writeDomains(domains);
+
+  console.log(chalk.green(`\n✅ Domain "${removed.domain}" removed (was connected to "${removed.projectName}").\n`));
+}
+
 // ─── Main entry point ─────────────────────────────────────────────────────────
 
 (async function main() {
@@ -887,28 +1056,17 @@ async function handlePluginRemove(pluginName) {
     process.exit(0);
   }
 
-    // Register with platform API if requested
-    if (flags.register) {
-      try {
-        const project = await registerWithPlatform(
-          projectName,
-          templateKey,
-          '',
-          flags.apiUrl
-        );
-        console.log(chalk.green(`✅ Project registered on platform (ID: ${project.id})`));
-      } catch (err) {
-        console.log(chalk.yellow(`⚠️  Could not register with platform: ${err.message}`));
-        console.log(chalk.gray('   You can register later by starting the API server and running autodevstack register.'));
-      }
-    }
-
-    console.log(chalk.blue(`\n✨ Stack: ${selectedStack}\n`));
-    console.log(chalk.bold('Next steps:'));
-    console.log(chalk.cyan(`  cd ${projectName}`));
-    console.log(chalk.cyan('  npm install'));
-    if (flags.docker) {
-      console.log(chalk.cyan('  docker-compose up'));
+  try {
+    if (firstArg === 'create') {
+      await handleCreate(args.slice(1));
+    } else if (firstArg === 'template') {
+      await handleTemplate(args.slice(1));
+    } else if (firstArg === 'ai') {
+      await handleAi(args.slice(1));
+    } else if (firstArg === 'plugin') {
+      await handlePlugin(args.slice(1));
+    } else if (firstArg === 'domain') {
+      await handleDomain(args.slice(1));
     } else {
       // Legacy / default mode: no subcommand → behave as 'create'
       await handleCreate(args);

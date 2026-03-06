@@ -3,6 +3,7 @@ const express = require('express');
 const authRoutes = require('./routes/auth');
 const projectRoutes = require('./routes/projects');
 const deployRoutes = require('./routes/deploy');
+const domainRoutes = require('./routes/domains');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -13,6 +14,7 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/deploy', deployRoutes);
+app.use('/api/domains', domainRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {

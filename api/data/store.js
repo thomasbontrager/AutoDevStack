@@ -7,7 +7,7 @@ function read() {
   try {
     return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
   } catch {
-    return { users: [], projects: [], deployments: [] };
+    return { users: [], projects: [], deployments: [], domains: [] };
   }
 }
 
@@ -51,6 +51,36 @@ function createDeployment(deployment) {
   return deployment;
 }
 
+function getDomains() {
+  return read().domains || [];
+}
+
+function getDomainsByOwner(owner) {
+  return getDomains().filter(d => d.owner === owner);
+}
+
+function getDomainByName(domain) {
+  return getDomains().find(d => d.domain === domain) || null;
+}
+
+function createDomain(domain) {
+  const db = read();
+  if (!db.domains) db.domains = [];
+  db.domains.push(domain);
+  write(db);
+  return domain;
+}
+
+function deleteDomain(domain, owner) {
+  const db = read();
+  if (!db.domains) db.domains = [];
+  const index = db.domains.findIndex(d => d.domain === domain && d.owner === owner);
+  if (index === -1) return null;
+  const removed = db.domains.splice(index, 1)[0];
+  write(db);
+  return removed;
+}
+
 module.exports = {
   getUsers,
   getUserByUsername,
@@ -59,4 +89,9 @@ module.exports = {
   createProject,
   getDeployments,
   createDeployment,
+  getDomains,
+  getDomainsByOwner,
+  getDomainByName,
+  createDomain,
+  deleteDomain,
 };

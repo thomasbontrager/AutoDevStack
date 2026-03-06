@@ -246,3 +246,131 @@ describe('GET /api/deploy', () => {
     assert.ok(Array.isArray(res.body.deployments));
   });
 });
+
+describe('GET /api/domains', () => {
+  test('returns 401 without auth token', async () => {
+    const res = await request('GET', '/api/domains');
+    assert.equal(res.status, 401);
+  });
+
+  test('returns empty list when no domains configured', async () => {
+    const res = await request('GET', '/api/domains', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body.domains));
+    assert.equal(res.body.domains.length, 0);
+  });
+});
+
+describe('POST /api/domains', () => {
+  let projectId;
+
+  before(async () => {
+    const res = await request('POST', '/api/projects/create', {
+      name: 'domain-test-project',
+      stack: 'node',
+    }, { Authorization: `Bearer ${authToken}` });
+    projectId = res.body.project.id;
+  });
+
+  test('returns 401 without auth token', async () => {
+    const res = await request('POST', '/api/domains', { domain: 'example.com', projectId });
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 400 when domain is missing', async () => {
+    const res = await request('POST', '/api/domains', { projectId }, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
+  test('returns 400 for invalid domain name', async () => {
+    const res = await request('POST', '/api/domains', {
+      domain: 'not-a-valid',
+      projectId,
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
+  test('returns 400 when projectId is missing', async () => {
+    const res = await request('POST', '/api/domains', {
+      domain: 'example.com',
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
+  test('returns 404 for nonexistent project', async () => {
+    const res = await request('POST', '/api/domains', {
+      domain: 'example.com',
+      projectId: 'proj_nonexistent',
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 404);
+  });
+
+  test('connects a domain to a project successfully', async () => {
+    const res = await request('POST', '/api/domains', {
+      domain: 'myapp.example.com',
+      projectId,
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    assert.ok(res.body.domain.id);
+    assert.equal(res.body.domain.domain, 'myapp.example.com');
+    assert.equal(res.body.domain.projectId, projectId);
+    assert.ok(res.body.dns);
+    assert.ok(Array.isArray(res.body.dns.records));
+  });
+
+  test('returns 409 for duplicate domain', async () => {
+    const res = await request('POST', '/api/domains', {
+      domain: 'myapp.example.com',
+      projectId,
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 409);
+    assert.ok(res.body.error);
+  });
+
+  test('domain appears in GET /api/domains', async () => {
+    const res = await request('GET', '/api/domains', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    const found = res.body.domains.find(d => d.domain === 'myapp.example.com');
+    assert.ok(found, 'Added domain should appear in list');
+  });
+});
+
+describe('DELETE /api/domains/:domain', () => {
+  test('returns 401 without auth token', async () => {
+    const res = await request('DELETE', '/api/domains/myapp.example.com');
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 404 for nonexistent domain', async () => {
+    const res = await request('DELETE', '/api/domains/notconfigured.com', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test('removes a domain successfully', async () => {
+    const res = await request('DELETE', '/api/domains/myapp.example.com', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.message.includes('removed'));
+  });
+
+  test('domain is gone after removal', async () => {
+    const res = await request('GET', '/api/domains', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    const found = res.body.domains.find(d => d.domain === 'myapp.example.com');
+    assert.ok(!found, 'Domain should not appear after removal');
+  });
+});
