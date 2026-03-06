@@ -14,7 +14,7 @@ const stacks = {
   "Node + Express + TypeScript": "node",
   "Next.js": "next",
   "T3 Stack (Next.js + Tailwind + tRPC + Prisma)": "t3",
-  "SaaS Starter (Next.js + Prisma + Stripe + Tailwind)": "saas",
+  "SaaS Starter (Next.js + Prisma + Stripe + tRPC + Tailwind)": "saas",
   "Monorepo (apps + services + packages)": "monorepo",
 };
 
