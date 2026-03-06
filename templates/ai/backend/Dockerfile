@@ -12,6 +12,8 @@ COPY . .
 RUN npx prisma generate
 RUN npm run build
 
+RUN chown -R node:node /app
+USER node
 EXPOSE 4000
 
 CMD ["node", "dist/index.js"]
