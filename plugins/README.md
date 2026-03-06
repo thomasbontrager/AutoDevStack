@@ -1,6 +1,6 @@
 # Plugins
 
-This directory is reserved for the AutoDevStack plugin system.
+This directory stores installed AutoDevStack plugins.
 
 Plugins allow community members and teams to extend AutoDevStack with custom templates, generators, and post-scaffold hooks.
 

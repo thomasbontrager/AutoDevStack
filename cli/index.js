@@ -22,8 +22,8 @@ const stacks = {
   "Monorepo (apps + services + packages)": "monorepo",
 };
 
-// Map CLI flags to template keys
-const stackAliases = {
+// Map CLI flag values to template keys
+export const stackAliases = {
   'default': 'default',
   'react': 'default',
   'node': 'node',
@@ -109,7 +109,7 @@ function showHelp() {
   console.log(chalk.cyan("  autodevstack plugin list\n"));
 
   console.log(chalk.yellow.bold("AVAILABLE STACKS:"));
-  Object.entries(stacks).forEach(([name, key]) => {
+  Object.entries(stacksMap).forEach(([name, key]) => {
     console.log(chalk.white(`  ${key.padEnd(12)} - ${name}`));
   });
 
@@ -172,6 +172,21 @@ services:
       - NODE_ENV=production
 ${dbService}
 `;
+  } else if (templateKey === 'monorepo') {
+    // Monorepo: copy docker-compose.yml from the infrastructure/docker directory that was
+    // already scaffolded as part of the template; just create a root convenience file.
+    const infraDockerDir = path.join(projectDir, 'infrastructure', 'docker');
+    const srcCompose = path.join(infraDockerDir, 'docker-compose.yml');
+    if (fs.existsSync(srcCompose)) {
+      // Copy docker-compose.yml to project root for convenience
+      fs.copyFileSync(srcCompose, path.join(projectDir, 'docker-compose.yml'));
+    }
+    // Copy .dockerignore from the template's infrastructure/docker directory to avoid duplication
+    const srcDockerignore = path.join(infraDockerDir, '.dockerignore');
+    if (fs.existsSync(srcDockerignore)) {
+      fs.copyFileSync(srcDockerignore, path.join(projectDir, '.dockerignore'));
+    }
+    return;
   } else if (templateKey === 'default') {
     dockerfile = `FROM node:18-alpine AS builder
 
@@ -323,8 +338,12 @@ async function handleCreate(args) {
     process.exit(0);
   }
 
-  console.log(chalk.green.bold("\n🚀 Welcome to AutoDevStack! 🚀"));
-  console.log(chalk.gray("Scaffold your next project in seconds.\n"));
+  // Git initialization
+  if (flags.git) {
+    const gitSpinner = ora('Initializing Git repository...').start();
+    try {
+      const originalDir = process.cwd();
+      process.chdir(projectDir);
 
   // Build all available stack choices (built-in + plugins)
   const allStackChoices = [
@@ -423,6 +442,7 @@ async function handleCreate(args) {
       pkg.name = projectName;
       fs.writeJsonSync(pkgPath, pkg, { spaces: 2 });
     }
+  }
 
     spinner.succeed(chalk.green(`Project "${projectName}" created successfully!`));
   } catch (err) {
@@ -586,6 +606,9 @@ async function handlePluginAdd(pluginName) {
       console.log(chalk.red(`\n❌ Local path "${sourcePath}" does not exist.\n`));
       process.exit(1);
     }
+    addPlugin(pluginName);
+    return;
+  }
 
     const manifestPath = path.join(sourcePath, 'plugin.json');
     if (!fs.existsSync(manifestPath)) {
@@ -600,6 +623,9 @@ async function handlePluginAdd(pluginName) {
       console.log(chalk.red('\n❌ plugin.json is not valid JSON.\n'));
       process.exit(1);
     }
+    removePlugin(pluginName);
+    return;
+  }
 
     const destName = manifest.name || path.basename(sourcePath);
     const destPath = path.join(pluginsDir, destName);
@@ -636,6 +662,12 @@ async function handlePluginAdd(pluginName) {
       if (!fs.existsSync(manifestPath)) {
         throw new Error(`"${pluginName}" does not appear to be a valid AutoDevStack plugin (missing plugin.json).`);
       }
+    } else {
+      console.log(chalk.white(`  ${entry.name}`));
+    }
+  }
+  console.log();
+}
 
       const manifest = fs.readJsonSync(manifestPath);
       const destName = manifest.name || pluginName;
