@@ -1,0 +1,57 @@
+{
+  "environment": "copilot",
+  "version": "1.0.0",
+  "generated_at": "2026-03-06T00:00:00.000Z",
+  "swarm": {
+    "max_agents": 5,
+    "agent_types": [
+      "code_assistant",
+      "documentation_writer",
+      "test_generator"
+    ],
+    "coordination_strategy": "collaborative",
+    "spawn_interval": 7000,
+    "auto_restart": true
+  },
+  "repository": {
+    "auto_create": true,
+    "pr_strategy": "copilot_suggestion",
+    "branch_naming": "copilot/{agent_id}/suggestion-{timestamp}",
+    "auto_merge": false,
+    "require_reviews": false,
+    "draft_prs": true
+  },
+  "analytics": {
+    "tracking_enabled": true,
+    "metrics_to_collect": [
+      "suggestions_made",
+      "suggestions_accepted",
+      "code_quality_score",
+      "documentation_coverage",
+      "test_coverage"
+    ],
+    "export_interval": 3600000
+  },
+  "deployment": {
+    "auto_deploy": false,
+    "health_checks": true,
+    "scaling": {
+      "enabled": true,
+      "min_agents": 1,
+      "max_agents": 5
+    }
+  },
+  "ai": {
+    "provider": "openai",
+    "model": "gpt-4",
+    "temperature": 0.6,
+    "max_tokens": 1500,
+    "context_window": 8000
+  },
+  "copilot": {
+    "suggestion_threshold": 0.7,
+    "auto_complete": true,
+    "inline_suggestions": true,
+    "explanation_mode": "detailed"
+  }
+}
