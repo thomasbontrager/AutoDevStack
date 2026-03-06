@@ -22,6 +22,7 @@ const stacks = {
   "SaaS Starter (Next.js + Prisma + Stripe + tRPC + Tailwind)": "saas",
   "Monorepo (apps + services + packages)": "monorepo",
   "AI App (Next.js + Express + LangChain + Prisma + OpenAI/Anthropic)": "ai",
+  "AI Swarm Platform (multi-agent + GitHub automation + live dashboard)": "ai-swarm-platform",
 };
 
 // Map CLI flag values to template keys
@@ -36,6 +37,9 @@ export const stackAliases = {
   'saas': 'saas',
   'monorepo': 'monorepo',
   'ai': 'ai',
+  'ai-swarm': 'ai-swarm-platform',
+  'swarm': 'ai-swarm-platform',
+  'ai-swarm-platform': 'ai-swarm-platform',
 };
 
 // Plugin registries (populated by loadPlugins())

@@ -1,0 +1,53 @@
+name: AI Global Swarm
+
+on:
+  schedule:
+    # Runs every day at 06:00 UTC
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      agent_count:
+        description: "Number of agents to spawn"
+        required: false
+        default: "3"
+
+jobs:
+  swarm:
+    name: Run AI Swarm
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run setup
+        run: node setup.js
+
+      - name: Generate AI configs
+        run: npm run generate
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+
+      - name: Run swarm engine
+        run: npm run swarm
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+          AGENT_COUNT: ${{ github.event.inputs.agent_count || '3' }}
+
+      - name: Upload analytics artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: swarm-analytics-${{ github.run_id }}
+          path: config/analytics.json
+          if-no-files-found: warn

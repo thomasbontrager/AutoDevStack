@@ -1,0 +1,28 @@
+{
+  "name": "ai-swarm-platform",
+  "version": "1.0.0",
+  "description": "Global autonomous AI swarm platform — multi-agent orchestration, GitHub automation, and live analytics dashboard.",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "start": "node scripts/dashboard-server.js",
+    "generate": "node scripts/run-ai.js",
+    "qa": "node scripts/qa.js",
+    "monitor": "node scripts/monitor.js",
+    "swarm": "node scripts/viral-swarm-final.js",
+    "dashboard": "node scripts/dashboard-server.js",
+    "deploy": "node scripts/deploy.js",
+    "setup": "node setup.js"
+  },
+  "dependencies": {
+    "@octokit/rest": "^21.0.2",
+    "chart.js": "^4.4.3",
+    "express": "^4.19.2",
+    "gh-pages": "^6.1.1",
+    "leaflet": "^1.9.4",
+    "openai": "^4.52.3",
+    "socket.io": "^4.7.5"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "env": "prod",
+  "apiBaseUrl": "https://api.example.com",
+  "logLevel": "warn",
+  "dbUrl": "postgresql://postgres:${POSTGRES_PASSWORD}@postgres:5432/swarm_prod",
+  "redisUrl": "redis://redis:6379",
+  "openaiModel": "gpt-4o",
+  "maxAgents": 10,
+  "swarmIntervalMs": 3600000,
+  "debug": false,
+  "features": ["swarm", "github-automation", "analytics", "dashboard"],
+  "rateLimit": { "windowMs": 900000, "max": 100 },
+  "retryPolicy": { "maxRetries": 3, "backoffMs": 1000 }
+}

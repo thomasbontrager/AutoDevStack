@@ -1,0 +1,68 @@
+version: "3.9"
+
+services:
+  # ── AI Swarm engine ──────────────────────────────────────────────────────
+  swarm:
+    build: .
+    container_name: ai-swarm-engine
+    restart: unless-stopped
+    command: node scripts/viral-swarm-final.js
+    environment:
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - GH_TOKEN=${GH_TOKEN}
+      - AGENT_COUNT=${AGENT_COUNT:-3}
+      - NODE_ENV=production
+    volumes:
+      - ./config:/app/config
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - swarm-net
+
+  # ── Dashboard server ─────────────────────────────────────────────────────
+  dashboard:
+    build: .
+    container_name: ai-swarm-dashboard
+    restart: unless-stopped
+    command: node scripts/dashboard-server.js
+    ports:
+      - "4000:4000"
+    environment:
+      - PORT=4000
+      - NODE_ENV=production
+    volumes:
+      - ./config:/app/config
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - swarm-net
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-swarm-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-swarmpassword}
+      POSTGRES_DB: swarm_prod
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - swarm-net
+
+volumes:
+  postgres_data:
+
+networks:
+  swarm-net:
+    driver: bridge

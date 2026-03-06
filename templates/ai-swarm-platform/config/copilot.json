@@ -1,0 +1,12 @@
+{
+  "env": "copilot",
+  "githubOrg": "your-org",
+  "defaultBranch": "main",
+  "prLabels": ["ai-generated", "automated"],
+  "reviewers": [],
+  "openaiModel": "gpt-4o-mini",
+  "maxAgents": 5,
+  "commitPrefix": "feat(swarm):",
+  "autoMerge": false,
+  "features": ["swarm", "github-automation"]
+}

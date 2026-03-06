@@ -1,0 +1,12 @@
+{
+  "env": "dev",
+  "apiBaseUrl": "http://localhost:4000",
+  "logLevel": "debug",
+  "dbUrl": "postgresql://postgres:postgres@localhost:5432/swarm_dev",
+  "redisUrl": "redis://localhost:6379",
+  "openaiModel": "gpt-4o-mini",
+  "maxAgents": 3,
+  "swarmIntervalMs": 60000,
+  "debug": true,
+  "features": ["swarm", "github-automation", "analytics", "dashboard"]
+}

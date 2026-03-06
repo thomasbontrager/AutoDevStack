@@ -1,0 +1,379 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI Swarm Platform — Live Dashboard</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- Socket.IO client -->
+  <script src="/socket.io/socket.io.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --accent: #58a6ff;
+      --green: #3fb950;
+      --orange: #d29922;
+      --red: #f85149;
+      --text: #e6edf3;
+      --muted: #8b949e;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 1rem 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    header h1 { font-size: 1.25rem; font-weight: 700; color: var(--accent); }
+    header .subtitle { font-size: 0.85rem; color: var(--muted); }
+
+    .pulse-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      animation: pulse 1.8s ease-in-out infinite;
+      flex-shrink: 0;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50%       { opacity: 0.5; transform: scale(1.4); }
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 340px auto;
+      gap: 1rem;
+      padding: 1rem;
+      height: calc(100vh - 64px);
+    }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .card-header {
+      padding: 0.75rem 1rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .card-body { flex: 1; overflow: auto; padding: 0.75rem; }
+
+    /* Map spans full row */
+    #map-card { grid-column: 1 / -1; }
+    #map { height: 100%; min-height: 260px; border-radius: 0 0 8px 8px; }
+
+    /* Stats row */
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 0.75rem;
+      grid-column: 1 / -1;
+    }
+    .stat-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1rem;
+      text-align: center;
+    }
+    .stat-card .value {
+      font-size: 2rem; font-weight: 700;
+      color: var(--accent);
+    }
+    .stat-card .label {
+      font-size: 0.8rem; color: var(--muted); margin-top: 0.25rem;
+    }
+
+    canvas { max-height: 220px; }
+
+    /* Recent activity list */
+    .activity-list { list-style: none; }
+    .activity-list li {
+      padding: 0.4rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: 0.82rem;
+      color: var(--muted);
+    }
+    .activity-list li:last-child { border-bottom: none; }
+    .activity-list .tag {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      margin-right: 6px;
+    }
+    .tag-create-repo { background: #238636; color: #fff; }
+    .tag-optimise-config { background: #1f6feb; color: #fff; }
+    .tag-demo-mode { background: #6e40c9; color: #fff; }
+    .tag-default { background: var(--border); color: var(--text); }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="pulse-dot"></div>
+  <div>
+    <h1>🌐 AI Swarm Platform</h1>
+    <div class="subtitle">Live Dashboard — real-time swarm analytics &amp; world map</div>
+  </div>
+  <div style="margin-left:auto;font-size:0.8rem;color:var(--muted)" id="last-updated">—</div>
+</header>
+
+<div class="layout">
+
+  <!-- World map -->
+  <div class="card" id="map-card">
+    <div class="card-header">
+      🗺️ Swarm Activity Map
+      <span style="font-size:0.75rem;color:var(--muted)" id="repo-count">0 repos</span>
+    </div>
+    <div id="map"></div>
+  </div>
+
+  <!-- Stat cards -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="value" id="stat-repos">0</div>
+      <div class="label">Repos Created</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" id="stat-prs">0</div>
+      <div class="label">PRs Opened</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" id="stat-agents">0</div>
+      <div class="label">Agent Runs</div>
+    </div>
+    <div class="stat-card">
+      <div class="value" id="stat-last">—</div>
+      <div class="label">Last Run</div>
+    </div>
+  </div>
+
+  <!-- Repo growth chart -->
+  <div class="card">
+    <div class="card-header">📈 Repo Growth</div>
+    <div class="card-body">
+      <canvas id="repoChart"></canvas>
+    </div>
+  </div>
+
+  <!-- PR activity chart -->
+  <div class="card">
+    <div class="card-header">🔀 PR Activity</div>
+    <div class="card-body">
+      <canvas id="prChart"></canvas>
+    </div>
+  </div>
+
+  <!-- Recent activity -->
+  <div class="card" style="grid-column: 1 / -1;">
+    <div class="card-header">🕐 Recent Agent Activity</div>
+    <div class="card-body">
+      <ul class="activity-list" id="activity-list">
+        <li style="color:var(--muted)">No activity yet — run <code>npm run swarm</code></li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ── Geographic bounds for random marker / line placement ─────────────────────
+const GEO = { LAT_MIN: -70, LAT_MAX: 70, LNG_MIN: -180, LNG_MAX: 180 };
+function randLat() { return Math.random() * (GEO.LAT_MAX - GEO.LAT_MIN) + GEO.LAT_MIN; }
+function randLng() { return Math.random() * (GEO.LNG_MAX - GEO.LNG_MIN) + GEO.LNG_MIN; }
+
+// ─── Leaflet map ─────────────────────────────────────────────────────────────
+const map = L.map('map', { zoomControl: true }).setView([20, 0], 2);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+  subdomains: 'abcd',
+  maxZoom: 19,
+}).addTo(map);
+
+const markers = {};
+const lines = [];
+
+function addRepoMarker(repo) {
+  if (markers[repo.name]) return;
+  const lat = repo.lat ?? randLat();
+  const lng = repo.lng ?? randLng();
+  const marker = L.circleMarker([lat, lng], {
+    radius: 7,
+    fillColor: '#58a6ff',
+    color: '#1f6feb',
+    weight: 2,
+    opacity: 1,
+    fillOpacity: 0.85,
+  }).addTo(map);
+  marker.bindPopup(`<b>${repo.name}</b><br/><a href="${repo.url || '#'}" target="_blank">View on GitHub</a>`);
+  markers[repo.name] = marker;
+
+  // Animated line from a random origin
+  const originLat = randLat() * 0.5;  // bias toward equatorial regions
+  const originLng = randLng();
+  const line = L.polyline([[originLat, originLng], [lat, lng]], {
+    color: '#3fb950', weight: 1.5, opacity: 0.5, dashArray: '4 6',
+  }).addTo(map);
+  lines.push(line);
+  setTimeout(() => map.removeLayer(line), 8000);
+}
+
+// ─── Charts ──────────────────────────────────────────────────────────────────
+const chartDefaults = {
+  responsive: true,
+  maintainAspectRatio: false,
+  plugins: { legend: { labels: { color: '#8b949e' } } },
+  scales: {
+    x: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' } },
+    y: { ticks: { color: '#8b949e' }, grid: { color: '#21262d' }, beginAtZero: true },
+  },
+};
+
+const repoChart = new Chart(document.getElementById('repoChart'), {
+  type: 'line',
+  data: {
+    labels: [],
+    datasets: [{
+      label: 'Repos Created',
+      data: [],
+      borderColor: '#58a6ff',
+      backgroundColor: 'rgba(88,166,255,0.12)',
+      fill: true,
+      tension: 0.4,
+    }],
+  },
+  options: { ...chartDefaults },
+});
+
+const prChart = new Chart(document.getElementById('prChart'), {
+  type: 'bar',
+  data: {
+    labels: [],
+    datasets: [{
+      label: 'PRs Opened',
+      data: [],
+      backgroundColor: 'rgba(63,185,80,0.7)',
+      borderColor: '#3fb950',
+      borderWidth: 1,
+    }],
+  },
+  options: { ...chartDefaults },
+});
+
+function updateCharts(analytics) {
+  const history = analytics.history || [];
+  const labels = history.map((h) => {
+    const d = new Date(h.runAt);
+    return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours()}:${String(d.getMinutes()).padStart(2,'0')}`;
+  });
+
+  repoChart.data.labels = labels;
+  repoChart.data.datasets[0].data = history.map((h) => h.reposCreated || 0);
+  repoChart.update();
+
+  prChart.data.labels = labels;
+  prChart.data.datasets[0].data = history.map((h) => h.prsOpened || 0);
+  prChart.update();
+}
+
+// ─── Stats helpers ───────────────────────────────────────────────────────────
+function setEl(id, value) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = value;
+}
+
+function updateStats(analytics) {
+  setEl('stat-repos', analytics.reposCreated ?? 0);
+  setEl('stat-prs', analytics.prsOpened ?? 0);
+  setEl('stat-agents', analytics.agentRuns ?? 0);
+  const lr = analytics.lastRun ? new Date(analytics.lastRun).toLocaleTimeString() : '—';
+  setEl('stat-last', lr);
+  setEl('last-updated', 'Updated ' + new Date().toLocaleTimeString());
+}
+
+function updateActivityList(history) {
+  const list = document.getElementById('activity-list');
+  if (!history || history.length === 0) return;
+  list.innerHTML = history.slice(0, 20).flatMap((run) => {
+    return (run.actions || []).map((action) => {
+      const tagClass = `tag-${action.type}`;
+      const label = action.type.replace(/-/g, ' ');
+      const detail = action.repo ? ` → ${action.repo}` : (action.env ? ` (${action.env})` : '');
+      return `<li><span class="tag ${tagClass}">${label}</span>${detail}
+        <span style="float:right;color:var(--muted)">${new Date(run.startedAt).toLocaleString()}</span></li>`;
+    });
+  }).join('') || '<li style="color:var(--muted)">No actions recorded yet.</li>';
+}
+
+function updateMapRepos(viral) {
+  const repos = viral.repos || [];
+  setEl('repo-count', `${repos.length} repo${repos.length !== 1 ? 's' : ''}`);
+  repos.forEach(addRepoMarker);
+}
+
+// ─── Socket.IO ───────────────────────────────────────────────────────────────
+const socket = io();
+
+socket.on('analytics', (data) => {
+  updateStats(data);
+  updateCharts(data);
+});
+socket.on('viral', (data) => {
+  updateMapRepos(data);
+});
+socket.on('history', (data) => {
+  updateActivityList(data);
+});
+
+// ─── Initial HTTP fetch (fallback) ───────────────────────────────────────────
+async function fetchAll() {
+  try {
+    const [analytics, viral, history] = await Promise.all([
+      fetch('/api/analytics').then((r) => r.json()),
+      fetch('/api/viral').then((r) => r.json()),
+      fetch('/api/history').then((r) => r.json()),
+    ]);
+    updateStats(analytics);
+    updateCharts(analytics);
+    updateMapRepos(viral);
+    updateActivityList(history);
+  } catch (err) {
+    console.warn('Initial fetch failed:', err);
+  }
+}
+fetchAll();
+</script>
+</body>
+</html>
