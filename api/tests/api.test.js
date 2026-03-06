@@ -23,6 +23,8 @@ const TEST_DB = {
   ],
   projects: [],
   deployments: [],
+  subscriptions: [],
+  invoices: [],
 };
 
 let server;
