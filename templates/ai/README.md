@@ -113,12 +113,14 @@ ANTHROPIC_API_KEY=sk-ant-...
 
 ## Database
 
-Prisma schema lives in `prisma/schema.prisma` and is used by the backend service.
+The shared Prisma schema lives at the repository root in `prisma/schema.prisma` and is used by the backend service.
+
+From the monorepo root, run the backend database commands via the backend workspace:
 
 ```bash
-npm run db:migrate    # Run migrations
-npm run db:push       # Push schema without migration
-npm run db:studio     # Open Prisma Studio
+npm run db:migrate --workspace=backend    # Run migrations
+npm run db:push --workspace=backend       # Push schema without migration
+npm run db:studio --workspace=backend     # Open Prisma Studio
 ```
 
 ## LangChain Tracing (optional)
