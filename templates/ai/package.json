@@ -1,0 +1,24 @@
+{
+  "name": "my-ai-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI-powered full-stack app with Next.js, Express, LangChain, and Prisma",
+  "workspaces": [
+    "frontend",
+    "backend",
+    "ai"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace=frontend\" \"npm run dev --workspace=backend\" \"npm run dev --workspace=ai\"",
+    "dev:frontend": "npm run dev --workspace=frontend",
+    "dev:backend": "npm run dev --workspace=backend",
+    "dev:ai": "npm run dev --workspace=ai",
+    "build": "npm run build --workspace=frontend && npm run build --workspace=backend && npm run build --workspace=ai",
+    "db:push": "npm run db:push --workspace=backend",
+    "db:migrate": "npm run db:migrate --workspace=backend",
+    "db:studio": "npm run db:studio --workspace=backend"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}

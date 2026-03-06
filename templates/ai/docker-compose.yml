@@ -1,0 +1,65 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: aiapp
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "4000:4000"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/aiapp
+      - AI_SERVICE_URL=http://ai:5000
+      - FRONTEND_URL=http://localhost:3000
+      - PORT=4000
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  ai:
+    build:
+      context: ./ai
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=development
+      - AI_PROVIDER=${AI_PROVIDER:-openai}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - AI_MODEL=${AI_MODEL:-gpt-4o-mini}
+      - AI_SERVICE_PORT=5000
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:4000
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_AI_SERVICE_URL=http://localhost:5000
+    depends_on:
+      - backend
+      - ai
+
+volumes:
+  postgres_data:
