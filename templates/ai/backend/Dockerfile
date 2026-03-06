@@ -3,7 +3,7 @@ FROM node:20-alpine
 WORKDIR /app
 
 COPY package*.json ./
-COPY prisma ./prisma/
+COPY templates/ai/prisma ./prisma/
 
 RUN npm install --omit=dev
 
