@@ -7,7 +7,7 @@ function read() {
   try {
     return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
   } catch {
-    return { users: [], projects: [], deployments: [] };
+    return { users: [], projects: [], deployments: [], domains: [] };
   }
 }
 
@@ -51,43 +51,34 @@ function createDeployment(deployment) {
   return deployment;
 }
 
-function getSubscriptionByUserId(userId) {
-  const db = read();
-  const subscriptions = db.subscriptions || [];
-  return subscriptions.find(s => s.userId === userId) || null;
+function getDomains() {
+  return read().domains || [];
 }
 
-function getSubscriptionByStripeId(stripeSubscriptionId) {
-  const db = read();
-  const subscriptions = db.subscriptions || [];
-  return subscriptions.find(s => s.stripeSubscriptionId === stripeSubscriptionId) || null;
+function getDomainsByOwner(owner) {
+  return getDomains().filter(d => d.owner === owner);
 }
 
-function upsertSubscription(subscription) {
+function getDomainByName(domain) {
+  return getDomains().find(d => d.domain === domain) || null;
+}
+
+function createDomain(domain) {
   const db = read();
-  if (!db.subscriptions) db.subscriptions = [];
-  const idx = db.subscriptions.findIndex(s => s.userId === subscription.userId);
-  if (idx >= 0) {
-    db.subscriptions[idx] = subscription;
-  } else {
-    db.subscriptions.push(subscription);
-  }
+  if (!db.domains) db.domains = [];
+  db.domains.push(domain);
   write(db);
-  return subscription;
+  return domain;
 }
 
-function getInvoicesByUserId(userId) {
+function deleteDomain(domain, owner) {
   const db = read();
-  const invoices = db.invoices || [];
-  return invoices.filter(i => i.userId === userId);
-}
-
-function createInvoice(invoice) {
-  const db = read();
-  if (!db.invoices) db.invoices = [];
-  db.invoices.push(invoice);
+  if (!db.domains) db.domains = [];
+  const index = db.domains.findIndex(d => d.domain === domain && d.owner === owner);
+  if (index === -1) return null;
+  const removed = db.domains.splice(index, 1)[0];
   write(db);
-  return invoice;
+  return removed;
 }
 
 module.exports = {
@@ -98,9 +89,9 @@ module.exports = {
   createProject,
   getDeployments,
   createDeployment,
-  getSubscriptionByUserId,
-  upsertSubscription,
-  getInvoicesByUserId,
-  createInvoice,
-  getSubscriptionByStripeId,
+  getDomains,
+  getDomainsByOwner,
+  getDomainByName,
+  createDomain,
+  deleteDomain,
 };
