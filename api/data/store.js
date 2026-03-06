@@ -195,6 +195,72 @@ function addInvoice(invoice) {
   return invoice;
 }
 
+// ─── Domains ──────────────────────────────────────────────────────────────────
+
+function getDomainsByOwner(owner) {
+  const db = read();
+  return (db.domains || []).filter(d => d.owner === owner);
+}
+
+function getDomainByName(domain) {
+  return (read().domains || []).find(d => d.domain === domain) || null;
+}
+
+function createDomain(record) {
+  const db = read();
+  if (!db.domains) db.domains = [];
+  db.domains.push(record);
+  write(db);
+  return record;
+}
+
+function deleteDomain(domain, owner) {
+  const db = read();
+  if (!db.domains) db.domains = [];
+  const idx = db.domains.findIndex(d => d.domain === domain && d.owner === owner);
+  if (idx < 0) return null;
+  const [removed] = db.domains.splice(idx, 1);
+  write(db);
+  return removed;
+}
+
+// ─── Compression records ──────────────────────────────────────────────────────
+
+function getCompressionRecordsByProject(projectId) {
+  return (read().compressionRecords || []).filter(r => r.projectId === projectId);
+}
+
+function upsertCompressionRecord(record) {
+  const db = read();
+  if (!db.compressionRecords) db.compressionRecords = [];
+  const idx = db.compressionRecords.findIndex(r => r.id === record.id);
+  if (idx >= 0) {
+    db.compressionRecords[idx] = record;
+  } else {
+    db.compressionRecords.push(record);
+  }
+  write(db);
+  return record;
+}
+
+// ─── Infrastructure towers ────────────────────────────────────────────────────
+
+function getTowersByOwner(owner) {
+  return (read().towers || []).filter(t => t.owner === owner);
+}
+
+function getTowerById(id) {
+  return (read().towers || []).find(t => t.id === id) || null;
+}
+
+function createTower(tower) {
+  const db = read();
+  if (!db.towers) db.towers = [];
+  db.towers.push(tower);
+  write(db);
+  return tower;
+}
+
 module.exports = {
   getUsers,
   getUserByUsername,

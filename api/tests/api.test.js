@@ -25,6 +25,9 @@ const TEST_DB = {
   deployments: [],
   billing: [],
   invoices: [],
+  domains: [],
+  compressionRecords: [],
+  towers: [],
 };
 
 let server;

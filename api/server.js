@@ -21,7 +21,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/deploy', deployRoutes);
 app.use('/api/billing', billingRoutes);
-app.use('/api/storage', storageRoutes);
+dapp.use('/api/storage', storageRoutes);
 app.use('/api/towers', towersRoutes);
 app.use('/api/domains', domainsRoutes);
 
