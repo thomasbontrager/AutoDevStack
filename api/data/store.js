@@ -51,6 +51,45 @@ function createDeployment(deployment) {
   return deployment;
 }
 
+function getSubscriptionByUserId(userId) {
+  const db = read();
+  const subscriptions = db.subscriptions || [];
+  return subscriptions.find(s => s.userId === userId) || null;
+}
+
+function getSubscriptionByStripeId(stripeSubscriptionId) {
+  const db = read();
+  const subscriptions = db.subscriptions || [];
+  return subscriptions.find(s => s.stripeSubscriptionId === stripeSubscriptionId) || null;
+}
+
+function upsertSubscription(subscription) {
+  const db = read();
+  if (!db.subscriptions) db.subscriptions = [];
+  const idx = db.subscriptions.findIndex(s => s.userId === subscription.userId);
+  if (idx >= 0) {
+    db.subscriptions[idx] = subscription;
+  } else {
+    db.subscriptions.push(subscription);
+  }
+  write(db);
+  return subscription;
+}
+
+function getInvoicesByUserId(userId) {
+  const db = read();
+  const invoices = db.invoices || [];
+  return invoices.filter(i => i.userId === userId);
+}
+
+function createInvoice(invoice) {
+  const db = read();
+  if (!db.invoices) db.invoices = [];
+  db.invoices.push(invoice);
+  write(db);
+  return invoice;
+}
+
 module.exports = {
   getUsers,
   getUserByUsername,
@@ -59,4 +98,9 @@ module.exports = {
   createProject,
   getDeployments,
   createDeployment,
+  getSubscriptionByUserId,
+  upsertSubscription,
+  getInvoicesByUserId,
+  createInvoice,
+  getSubscriptionByStripeId,
 };

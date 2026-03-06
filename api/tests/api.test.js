@@ -23,6 +23,8 @@ const TEST_DB = {
   ],
   projects: [],
   deployments: [],
+  subscriptions: [],
+  invoices: [],
 };
 
 let server;
@@ -244,5 +246,115 @@ describe('GET /api/deploy', () => {
     });
     assert.equal(res.status, 200);
     assert.ok(Array.isArray(res.body.deployments));
+  });
+});
+
+describe('GET /api/billing/plans', () => {
+  test('returns all plans without authentication', async () => {
+    const res = await request('GET', '/api/billing/plans');
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body.plans));
+    assert.equal(res.body.plans.length, 5);
+    const ids = res.body.plans.map(p => p.id);
+    assert.ok(ids.includes('free'));
+    assert.ok(ids.includes('starter'));
+    assert.ok(ids.includes('pro'));
+    assert.ok(ids.includes('team'));
+    assert.ok(ids.includes('enterprise'));
+  });
+});
+
+describe('GET /api/billing/subscription', () => {
+  test('returns 401 without auth token', async () => {
+    const res = await request('GET', '/api/billing/subscription');
+    assert.equal(res.status, 401);
+  });
+
+  test('returns subscription, plan, and usage for authenticated user', async () => {
+    const res = await request('GET', '/api/billing/subscription', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.subscription);
+    assert.equal(res.body.subscription.planId, 'free');
+    assert.ok(res.body.plan);
+    assert.equal(res.body.plan.id, 'free');
+    assert.ok(res.body.usage);
+    assert.ok(typeof res.body.usage.deploymentsThisMonth === 'number');
+  });
+});
+
+describe('POST /api/billing/subscribe', () => {
+  test('returns 401 without auth token', async () => {
+    const res = await request('POST', '/api/billing/subscribe', { planId: 'starter' });
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 400 for invalid plan', async () => {
+    const res = await request('POST', '/api/billing/subscribe', { planId: 'ultra' }, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
+  test('returns 400 for enterprise plan (requires sales contact)', async () => {
+    const res = await request('POST', '/api/billing/subscribe', { planId: 'enterprise' }, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
+  test('subscribes to starter plan successfully (no Stripe configured)', async () => {
+    const res = await request('POST', '/api/billing/subscribe', { planId: 'starter' }, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.subscription);
+    assert.equal(res.body.subscription.planId, 'starter');
+    assert.ok(res.body.plan);
+    assert.equal(res.body.plan.id, 'starter');
+    assert.ok(res.body.message);
+  });
+
+  test('subscription is persisted – GET /api/billing/subscription reflects new plan', async () => {
+    const res = await request('GET', '/api/billing/subscription', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.subscription.planId, 'starter');
+  });
+
+  test('can downgrade back to free plan', async () => {
+    const res = await request('POST', '/api/billing/subscribe', { planId: 'free' }, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.subscription.planId, 'free');
+  });
+});
+
+describe('GET /api/billing/invoices', () => {
+  test('returns 401 without auth token', async () => {
+    const res = await request('GET', '/api/billing/invoices');
+    assert.equal(res.status, 401);
+  });
+
+  test('returns invoices array for authenticated user', async () => {
+    // Subscribe to starter to generate an invoice
+    await request('POST', '/api/billing/subscribe', { planId: 'starter' }, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    const res = await request('GET', '/api/billing/invoices', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body.invoices));
+    assert.ok(res.body.invoices.length >= 1);
+    const inv = res.body.invoices[0];
+    assert.ok(inv.id);
+    assert.ok(inv.amount);
+    assert.equal(inv.status, 'paid');
   });
 });
