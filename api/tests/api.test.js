@@ -25,6 +25,9 @@ const TEST_DB = {
   deployments: [],
   billing: [],
   invoices: [],
+  domains: [],
+  compressionRecords: [],
+  towers: [],
 };
 
 let server;
@@ -444,5 +447,264 @@ describe('POST /api/billing/cancel', () => {
     });
     assert.equal(res.status, 400);
     assert.ok(res.body.error);
+  });
+});
+
+// ─── Compression API ──────────────────────────────────────────────────────────
+
+describe('POST /api/compression/analyze', () => {
+  let projectId;
+
+  before(async () => {
+    const res = await request('POST', '/api/projects/create', {
+      name: 'compression-test-project',
+      stack: 'node',
+    }, { Authorization: `Bearer ${authToken}` });
+    projectId = res.body.project.id;
+  });
+
+  test('returns 401 without auth token', async () => {
+    const res = await request('POST', '/api/compression/analyze', { projectId });
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 400 when projectId is missing', async () => {
+    const res = await request('POST', '/api/compression/analyze', {}, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
+  test('returns 404 for nonexistent project', async () => {
+    const res = await request('POST', '/api/compression/analyze', {
+      projectId: 'proj_nonexistent',
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 404);
+  });
+
+  test('returns analysis for a valid project', async () => {
+    const res = await request('POST', '/api/compression/analyze', {
+      projectId,
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.projectId, projectId);
+    assert.ok(res.body.analysis);
+    assert.ok(typeof res.body.analysis.sizeBytes === 'number');
+    assert.ok(typeof res.body.analysis.needsCompression === 'boolean');
+    assert.ok(typeof res.body.analysis.thresholdBytes === 'number');
+    assert.ok(typeof res.body.analysis.targetBytes === 'number');
+  });
+});
+
+describe('POST /api/compression/compress', () => {
+  let projectId;
+
+  before(async () => {
+    const res = await request('POST', '/api/projects/create', {
+      name: 'compress-trigger-project',
+      stack: 'next',
+    }, { Authorization: `Bearer ${authToken}` });
+    projectId = res.body.project.id;
+  });
+
+  test('returns 401 without auth token', async () => {
+    const res = await request('POST', '/api/compression/compress', { projectId });
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 400 when projectId is missing', async () => {
+    const res = await request('POST', '/api/compression/compress', {}, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
+  test('returns 404 for nonexistent project', async () => {
+    const res = await request('POST', '/api/compression/compress', {
+      projectId: 'proj_nonexistent',
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 404);
+  });
+
+  test('returns 400 when project is below threshold and force is not set', async () => {
+    const res = await request('POST', '/api/compression/compress', {
+      projectId,
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
+  test('accepts compression with force=true', async () => {
+    const res = await request('POST', '/api/compression/compress', {
+      projectId,
+      force: true,
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 202);
+    assert.ok(res.body.compressionId);
+    assert.equal(res.body.status, 'queued');
+  });
+});
+
+describe('GET /api/compression/:projectId', () => {
+  let projectId;
+
+  before(async () => {
+    const res = await request('POST', '/api/projects/create', {
+      name: 'compression-records-project',
+      stack: 'node',
+    }, { Authorization: `Bearer ${authToken}` });
+    projectId = res.body.project.id;
+    // Trigger a compression job so there is at least one record
+    await request('POST', '/api/compression/compress', {
+      projectId,
+      force: true,
+    }, { Authorization: `Bearer ${authToken}` });
+  });
+
+  test('returns 401 without auth token', async () => {
+    const res = await request('GET', `/api/compression/${projectId}`);
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 404 for nonexistent project', async () => {
+    const res = await request('GET', '/api/compression/proj_nonexistent', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test('returns compression records for a valid project', async () => {
+    const res = await request('GET', `/api/compression/${projectId}`, null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.projectId, projectId);
+    assert.ok(Array.isArray(res.body.records));
+    assert.ok(res.body.records.length >= 1);
+    assert.ok(res.body.records[0].id);
+    assert.ok(res.body.records[0].status);
+  });
+});
+
+// ─── Infrastructure API ───────────────────────────────────────────────────────
+
+describe('GET /api/infrastructure/plans', () => {
+  test('returns list of tower plans without authentication', async () => {
+    const res = await request('GET', '/api/infrastructure/plans');
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body.plans));
+    const planIds = res.body.plans.map(p => p.id);
+    assert.ok(planIds.includes('micro'));
+    assert.ok(planIds.includes('standard'));
+    assert.ok(planIds.includes('pro'));
+    assert.ok(planIds.includes('enterprise'));
+    assert.ok(typeof res.body.provisionTimeDays === 'number');
+  });
+});
+
+describe('GET /api/infrastructure/towers', () => {
+  test('returns 401 without auth token', async () => {
+    const res = await request('GET', '/api/infrastructure/towers');
+    assert.equal(res.status, 401);
+  });
+
+  test('returns list of towers for authenticated user', async () => {
+    const res = await request('GET', '/api/infrastructure/towers', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body.towers));
+  });
+});
+
+describe('POST /api/infrastructure/towers', () => {
+  test('returns 401 without auth token', async () => {
+    const res = await request('POST', '/api/infrastructure/towers', { plan: 'micro' });
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 400 when plan is missing', async () => {
+    const res = await request('POST', '/api/infrastructure/towers', {}, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
+  test('returns 400 for invalid plan', async () => {
+    const res = await request('POST', '/api/infrastructure/towers', {
+      plan: 'super-ultra-mega',
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
+  test('returns 400 for invalid region', async () => {
+    const res = await request('POST', '/api/infrastructure/towers', {
+      plan: 'micro',
+      region: 'mars-1',
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
+  test('provisions a micro tower successfully', async () => {
+    const res = await request('POST', '/api/infrastructure/towers', {
+      plan: 'micro',
+      region: 'us-east-1',
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 201);
+    assert.ok(res.body.tower.id);
+    assert.equal(res.body.tower.plan, 'micro');
+    assert.equal(res.body.tower.region, 'us-east-1');
+    assert.equal(res.body.tower.status, 'provisioning');
+    assert.ok(res.body.tower.compressionEnabled);
+    assert.ok(res.body.tower.autoScaleEnabled);
+    assert.ok(typeof res.body.estimatedReadyDays === 'number');
+  });
+
+  test('provisions an enterprise tower successfully', async () => {
+    const res = await request('POST', '/api/infrastructure/towers', {
+      plan: 'enterprise',
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.tower.plan, 'enterprise');
+    assert.equal(res.body.tower.cpu, 32);
+    assert.equal(res.body.tower.ramGB, 128);
+  });
+});
+
+describe('GET /api/infrastructure/towers/:id', () => {
+  let towerId;
+
+  before(async () => {
+    const res = await request('POST', '/api/infrastructure/towers', {
+      plan: 'standard',
+    }, { Authorization: `Bearer ${authToken}` });
+    towerId = res.body.tower.id;
+  });
+
+  test('returns 401 without auth token', async () => {
+    const res = await request('GET', `/api/infrastructure/towers/${towerId}`);
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 404 for nonexistent tower', async () => {
+    const res = await request('GET', '/api/infrastructure/towers/tower_nonexistent', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test('returns tower by id', async () => {
+    const res = await request('GET', `/api/infrastructure/towers/${towerId}`, null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.tower);
+    assert.equal(res.body.tower.id, towerId);
+    assert.equal(res.body.tower.plan, 'standard');
   });
 });

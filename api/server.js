@@ -4,6 +4,9 @@ const authRoutes = require('./routes/auth');
 const projectRoutes = require('./routes/projects');
 const deployRoutes = require('./routes/deploy');
 const billingRoutes = require('./routes/billing');
+const domainsRoutes = require('./routes/domains');
+const compressionRoutes = require('./routes/compression');
+const infrastructureRoutes = require('./routes/infrastructure');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -18,6 +21,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/deploy', deployRoutes);
 app.use('/api/billing', billingRoutes);
+app.use('/api/domains', domainsRoutes);
+app.use('/api/compression', compressionRoutes);
+app.use('/api/infrastructure', infrastructureRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
