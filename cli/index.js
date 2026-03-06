@@ -37,37 +37,47 @@ export const stackAliases = {
   'ai': 'ai',
 };
 
-// Plugin registry – populated at startup from plugins/<name>/plugin.json
-const pluginTemplates = {};  // displayName -> { key, path, plugin }
-const pluginAliases = {};    // key.toLowerCase() -> key
+// Parse command-line arguments
+function parseArgs() {
+  const args = process.argv.slice(2);
+  const flags = {
+    projectName: null,
+    stack: null,
+    template: null,
+    git: false,
+    docker: false,
+    ai: false,
+    register: false,
+    apiUrl: null,
+    help: false,
+  };
 
 // Load plugins from the plugins/ directory
 function loadPlugins() {
   const pluginsDir = path.join(__dirname, '..', 'plugins');
   if (!fs.existsSync(pluginsDir)) return;
 
-  const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-    const manifestPath = path.join(pluginsDir, entry.name, 'plugin.json');
-    if (!fs.existsSync(manifestPath)) continue;
-
-    try {
-      const manifest = fs.readJsonSync(manifestPath);
-      const templates = manifest.templates || [];
-      for (const tpl of templates) {
-        const tplPath = path.resolve(
-          pluginsDir,
-          entry.name,
-          tpl.path || `templates/${tpl.key}`
-        );
-        if (fs.existsSync(tplPath)) {
-          pluginTemplates[tpl.name] = { key: tpl.key, path: tplPath, plugin: manifest.name };
-          pluginAliases[tpl.key.toLowerCase()] = tpl.key;
-        }
-      }
-    } catch {
-      // Skip plugins with invalid manifests
+    if (arg === '--help' || arg === '-h') {
+      flags.help = true;
+    } else if (arg === '--stack' && args[i + 1]) {
+      flags.stack = args[i + 1];
+      i++;
+    } else if (arg === '--template' && args[i + 1]) {
+      flags.template = args[i + 1];
+      i++;
+    } else if (arg === '--git') {
+      flags.git = true;
+    } else if (arg === '--docker') {
+      flags.docker = true;
+    } else if (arg === '--ai') {
+      flags.ai = true;
+    } else if (arg === '--register') {
+      flags.register = true;
+    } else if (arg === '--api-url' && args[i + 1]) {
+      flags.apiUrl = args[i + 1];
+      i++;
+    } else if (!arg.startsWith('-') && !flags.projectName) {
+      flags.projectName = arg;
     }
   }
 }
@@ -86,7 +96,9 @@ function showHelp() {
   console.log(chalk.white("  --template <name>    Alias for --stack"));
   console.log(chalk.white("  --git                Initialize Git repository"));
   console.log(chalk.white("  --docker             Add Docker support (Dockerfile + docker-compose.yml)"));
-  console.log(chalk.white("  --ai                 Generate an AI-powered app (Next.js + Express + LangChain + Prisma)"));
+  console.log(chalk.white("  --ai                 AI-powered app generation (coming soon)"));
+  console.log(chalk.white("  --register           Register project with the AutoDevStack platform API"));
+  console.log(chalk.white("  --api-url <url>      Platform API URL (default: http://localhost:4000)"));
   console.log(chalk.white("  --help, -h           Show this help message\n"));
 
   console.log(chalk.yellow.bold("PLUGIN SUBCOMMANDS:"));
@@ -265,22 +277,74 @@ build
   fs.writeFileSync(path.join(projectDir, '.dockerignore'), dockerignore);
 }
 
-async function generateAIProject(flags) {
-  console.log(chalk.magenta.bold('\n🤖 AI App Generator\n'));
-  console.log(chalk.gray('Generate a full-stack AI application with Next.js, Express, LangChain, and Prisma.\n'));
+async function registerWithPlatform(projectName, templateKey, description, apiUrl) {
+  const url = apiUrl || 'http://localhost:4000';
 
-  const questions = [];
-
-  if (!flags.projectName) {
-    questions.push({
+  // Prompt for platform credentials
+  const { username, password } = await inquirer.prompt([
+    {
       type: 'input',
-      name: 'projectName',
-      message: 'Project name:',
-      default: 'my-ai-app',
-      validate: (input) => {
-        if (!input.trim()) return 'Project name cannot be empty.';
-        if (!/^[a-z0-9-_]+$/i.test(input.trim())) return 'Project name can only contain letters, numbers, dashes, and underscores.';
-        return true;
+      name: 'username',
+      message: 'Platform API username:',
+      validate: input => input.trim() ? true : 'Username cannot be empty.',
+    },
+    {
+      type: 'password',
+      name: 'password',
+      message: 'Platform API password:',
+      mask: '*',
+      validate: input => input ? true : 'Password cannot be empty.',
+    },
+  ]);
+
+  // Login
+  let token;
+  try {
+    const loginRes = await fetch(`${url}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const loginData = await loginRes.json();
+    if (!loginRes.ok) {
+      throw new Error(loginData.error || 'Login failed');
+    }
+    token = loginData.token;
+  } catch (err) {
+    throw new Error(`Failed to authenticate with platform: ${err.message}`);
+  }
+
+  // Register project
+  const registerRes = await fetch(`${url}/api/projects/create`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({ name: projectName, stack: templateKey, description }),
+  });
+  const registerData = await registerRes.json();
+  if (!registerRes.ok) {
+    throw new Error(registerData.error || 'Project registration failed');
+  }
+  return registerData.project;
+}
+
+
+
+(async function main() {
+  // Parse CLI arguments
+  let flags, positionals;
+  try {
+    ({ values: flags, positionals } = parseArgs({
+      args: process.argv.slice(2),
+      options: {
+        stack:    { type: 'string',  short: 's' },
+        template: { type: 'string',  short: 't' },
+        ai:       { type: 'boolean' },
+        git:      { type: 'boolean' },
+        docker:   { type: 'boolean' },
+        help:     { type: 'boolean', short: 'h' },
       },
     });
   }
@@ -792,15 +856,28 @@ async function handlePluginRemove(pluginName) {
     process.exit(0);
   }
 
-  try {
-    if (firstArg === 'create') {
-      await handleCreate(args.slice(1));
-    } else if (firstArg === 'template') {
-      await handleTemplate(args.slice(1));
-    } else if (firstArg === 'ai') {
-      await handleAi(args.slice(1));
-    } else if (firstArg === 'plugin') {
-      await handlePlugin(args.slice(1));
+    // Register with platform API if requested
+    if (flags.register) {
+      try {
+        const project = await registerWithPlatform(
+          projectName,
+          templateKey,
+          '',
+          flags.apiUrl
+        );
+        console.log(chalk.green(`✅ Project registered on platform (ID: ${project.id})`));
+      } catch (err) {
+        console.log(chalk.yellow(`⚠️  Could not register with platform: ${err.message}`));
+        console.log(chalk.gray('   You can register later by starting the API server and running autodevstack register.'));
+      }
+    }
+
+    console.log(chalk.blue(`\n✨ Stack: ${selectedStack}\n`));
+    console.log(chalk.bold('Next steps:'));
+    console.log(chalk.cyan(`  cd ${projectName}`));
+    console.log(chalk.cyan('  npm install'));
+    if (flags.docker) {
+      console.log(chalk.cyan('  docker-compose up'));
     } else {
       // Legacy / default mode: no subcommand → behave as 'create'
       await handleCreate(args);
