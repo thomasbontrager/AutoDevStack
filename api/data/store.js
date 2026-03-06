@@ -7,7 +7,7 @@ function read() {
   try {
     return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
   } catch {
-    return { users: [], projects: [], deployments: [], billing: [], invoices: [] };
+    return { users: [], projects: [], deployments: [], billing: [], invoices: [], storage: [], towers: [], domains: [] };
   }
 }
 
@@ -49,6 +49,110 @@ function createDeployment(deployment) {
   db.deployments.push(deployment);
   write(db);
   return deployment;
+}
+
+function updateDeployment(id, fields) {
+  const db = read();
+  const idx = (db.deployments || []).findIndex(d => d.id === id);
+  if (idx >= 0) {
+    db.deployments[idx] = { ...db.deployments[idx], ...fields };
+    write(db);
+    return db.deployments[idx];
+  }
+  return null;
+}
+
+// ─── Storage ──────────────────────────────────────────────────────────────────
+
+function getStorageRecord(projectId) {
+  const db = read();
+  return (db.storage || []).find(s => s.projectId === projectId) || null;
+}
+
+function getStorageRecordsByOwner(owner) {
+  const db = read();
+  return (db.storage || []).filter(s => s.owner === owner);
+}
+
+function updateStorageRecord(projectId, data) {
+  const db = read();
+  if (!db.storage) db.storage = [];
+  const idx = db.storage.findIndex(s => s.projectId === projectId);
+  if (idx >= 0) {
+    db.storage[idx] = { ...db.storage[idx], ...data };
+  } else {
+    db.storage.push(data);
+  }
+  write(db);
+  return db.storage.find(s => s.projectId === projectId);
+}
+
+// ─── Towers ───────────────────────────────────────────────────────────────────
+
+function getTowers() {
+  return read().towers || [];
+}
+
+function getTowerById(id) {
+  return (read().towers || []).find(t => t.id === id) || null;
+}
+
+function registerTower(tower) {
+  const db = read();
+  if (!db.towers) db.towers = [];
+  db.towers.push(tower);
+  write(db);
+  return tower;
+}
+
+function updateTower(id, fields) {
+  const db = read();
+  if (!db.towers) db.towers = [];
+  const idx = db.towers.findIndex(t => t.id === id);
+  if (idx >= 0) {
+    db.towers[idx] = { ...db.towers[idx], ...fields };
+    write(db);
+    return db.towers[idx];
+  }
+  return null;
+}
+
+function deregisterTower(id) {
+  const db = read();
+  if (!db.towers) return null;
+  const idx = db.towers.findIndex(t => t.id === id);
+  if (idx < 0) return null;
+  const [removed] = db.towers.splice(idx, 1);
+  write(db);
+  return removed;
+}
+
+// ─── Domains ──────────────────────────────────────────────────────────────────
+
+function getDomainsByOwner(owner) {
+  return (read().domains || []).filter(d => d.owner === owner);
+}
+
+function getDomainByName(domain) {
+  return (read().domains || []).find(d => d.domain === domain) || null;
+}
+
+function createDomain(record) {
+  const db = read();
+  if (!db.domains) db.domains = [];
+  db.domains.push(record);
+  write(db);
+  return record;
+}
+
+function deleteDomain(domain, owner) {
+  const db = read();
+  if (!db.domains) return null;
+  const idx = db.domains.findIndex(d => d.domain === domain && d.owner === owner);
+  if (idx < 0) return null;
+  const [removed] = db.domains.splice(idx, 1);
+  write(db);
+  return removed;
 }
 
 function getBilling(userId) {
@@ -99,9 +203,22 @@ module.exports = {
   createProject,
   getDeployments,
   createDeployment,
+  updateDeployment,
   getBilling,
   getAllBilling,
   updateBilling,
   getInvoices,
   addInvoice,
+  getStorageRecord,
+  getStorageRecordsByOwner,
+  updateStorageRecord,
+  getTowers,
+  getTowerById,
+  registerTower,
+  updateTower,
+  deregisterTower,
+  getDomainsByOwner,
+  getDomainByName,
+  createDomain,
+  deleteDomain,
 };

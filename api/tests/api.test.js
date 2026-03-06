@@ -446,3 +446,217 @@ describe('POST /api/billing/cancel', () => {
     assert.ok(res.body.error);
   });
 });
+
+// ─── Storage API ─────────────────────────────────────────────────────────────
+
+describe('GET /api/storage', () => {
+  test('returns 401 without auth token', async () => {
+    const res = await request('GET', '/api/storage');
+    assert.equal(res.status, 401);
+  });
+
+  test('returns empty storage list for new user', async () => {
+    const res = await request('GET', '/api/storage', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body.storage));
+  });
+});
+
+describe('GET /api/storage/:projectId', () => {
+  let storageProjectId;
+
+  before(async () => {
+    const res = await request('POST', '/api/projects/create', {
+      name: 'storage-test-project',
+      stack: 'node',
+    }, { Authorization: `Bearer ${authToken}` });
+    storageProjectId = res.body.project.id;
+  });
+
+  test('returns 401 without auth token', async () => {
+    const res = await request('GET', `/api/storage/${storageProjectId}`);
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 404 for nonexistent project', async () => {
+    const res = await request('GET', '/api/storage/proj_nonexistent', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test('returns default storage record for project with no compression history', async () => {
+    const res = await request('GET', `/api/storage/${storageProjectId}`, null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.storage);
+    assert.equal(res.body.storage.projectId, storageProjectId);
+    assert.equal(res.body.storage.status, 'idle');
+    assert.ok(res.body.storage.thresholdHuman);
+  });
+});
+
+describe('POST /api/storage/:projectId/compress', () => {
+  let compressProjectId;
+
+  before(async () => {
+    const res = await request('POST', '/api/projects/create', {
+      name: 'compress-test-project',
+      stack: 'node',
+    }, { Authorization: `Bearer ${authToken}` });
+    compressProjectId = res.body.project.id;
+  });
+
+  test('returns 401 without auth token', async () => {
+    const res = await request('POST', `/api/storage/${compressProjectId}/compress`, {});
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 404 for nonexistent project', async () => {
+    const res = await request('POST', '/api/storage/proj_nonexistent/compress', {}, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test('queues a compression job for the project', async () => {
+    const res = await request('POST', `/api/storage/${compressProjectId}/compress`, {
+      originalSizeBytes: 5368709120,
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 202);
+    assert.ok(res.body.jobId);
+    assert.ok(res.body.storage);
+    assert.equal(res.body.storage.status, 'compressing');
+    assert.equal(res.body.storage.originalSizeBytes, 5368709120);
+  });
+
+  test('returns 409 when compression is already in progress', async () => {
+    const res = await request('POST', `/api/storage/${compressProjectId}/compress`, {}, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 409);
+    assert.ok(res.body.error);
+  });
+});
+
+// ─── Towers API ───────────────────────────────────────────────────────────────
+
+describe('GET /api/towers', () => {
+  test('returns 401 without auth token', async () => {
+    const res = await request('GET', '/api/towers');
+    assert.equal(res.status, 401);
+  });
+
+  test('returns list when no towers are registered', async () => {
+    const res = await request('GET', '/api/towers', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body.towers));
+  });
+});
+
+describe('POST /api/towers/register', () => {
+  test('returns 401 without build secret', async () => {
+    const res = await request('POST', '/api/towers/register', {
+      url: 'http://localhost:5000',
+    });
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 400 when url is missing', async () => {
+    const res = await request('POST', '/api/towers/register', {}, {
+      'x-build-secret': 'dev-build-secret',
+    });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
+  test('returns 400 for an invalid url', async () => {
+    const res = await request('POST', '/api/towers/register', {
+      url: 'not-a-valid-url',
+    }, { 'x-build-secret': 'dev-build-secret' });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
+  test('registers a tower successfully', async () => {
+    const res = await request('POST', '/api/towers/register', {
+      url: 'http://localhost:5001',
+      region: 'us-east',
+    }, { 'x-build-secret': 'dev-build-secret' });
+    assert.equal(res.status, 201);
+    assert.ok(res.body.tower);
+    assert.ok(res.body.tower.id);
+    assert.equal(res.body.tower.url, 'http://localhost:5001');
+    assert.equal(res.body.tower.region, 'us-east');
+  });
+});
+
+describe('POST /api/towers/:id/heartbeat', () => {
+  let towerId;
+
+  before(async () => {
+    const res = await request('POST', '/api/towers/register', {
+      url: 'http://localhost:5002',
+    }, { 'x-build-secret': 'dev-build-secret' });
+    towerId = res.body.tower.id;
+  });
+
+  test('returns 401 without build secret', async () => {
+    const res = await request('POST', `/api/towers/${towerId}/heartbeat`, {});
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 404 for nonexistent tower', async () => {
+    const res = await request('POST', '/api/towers/tower_nonexistent/heartbeat', {}, {
+      'x-build-secret': 'dev-build-secret',
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test('records heartbeat with active job count', async () => {
+    const res = await request('POST', `/api/towers/${towerId}/heartbeat`, {
+      activeJobs: 3,
+    }, { 'x-build-secret': 'dev-build-secret' });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.tower);
+    assert.equal(res.body.tower.activeJobs, 3);
+    assert.ok(res.body.tower.lastHeartbeatAt);
+  });
+});
+
+describe('DELETE /api/towers/:id', () => {
+  let towerId;
+
+  before(async () => {
+    const res = await request('POST', '/api/towers/register', {
+      url: 'http://localhost:5003',
+    }, { 'x-build-secret': 'dev-build-secret' });
+    towerId = res.body.tower.id;
+  });
+
+  test('returns 401 without build secret', async () => {
+    const res = await request('DELETE', `/api/towers/${towerId}`);
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 404 for nonexistent tower', async () => {
+    const res = await request('DELETE', '/api/towers/tower_nonexistent', null, {
+      'x-build-secret': 'dev-build-secret',
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test('deregisters a tower successfully', async () => {
+    const res = await request('DELETE', `/api/towers/${towerId}`, null, {
+      'x-build-secret': 'dev-build-secret',
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.tower);
+    assert.equal(res.body.tower.id, towerId);
+  });
+});

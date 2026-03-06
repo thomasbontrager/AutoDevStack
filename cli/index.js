@@ -97,7 +97,10 @@ function showHelp() {
   console.log(chalk.white("  saas                 Instantly generate a full SaaS stack"));
   console.log(chalk.white("  template             Manage templates"));
   console.log(chalk.white("  ai                   AI-powered app generation (coming soon)"));
-  console.log(chalk.white("  plugin               Manage plugins\n"));
+  console.log(chalk.white("  plugin               Manage plugins"));
+  console.log(chalk.white("  deploy               Deploy a project to the platform"));
+  console.log(chalk.white("  storage              Manage cloud workspace storage & compression"));
+  console.log(chalk.white("  domain               Manage custom domains\n"));
 
   console.log(chalk.yellow.bold("SUBCOMMANDS:"));
   console.log(chalk.white("  create   <name>      Scaffold a project with any built-in or plugin stack"));
@@ -298,18 +301,6 @@ dist
 build
 `;
   fs.writeFileSync(path.join(projectDir, '.dockerignore'), dockerignore);
-}
-
-// ─── Git init ─────────────────────────────────────────────────────────────────
-
-function initGit(projectDir) {
-  try {
-    execSync('git init', { cwd: projectDir, stdio: 'ignore' });
-    execSync('git add -A', { cwd: projectDir, stdio: 'ignore' });
-    execSync('git commit -m "Initial commit from AutoDevStack"', { cwd: projectDir, stdio: 'ignore' });
-  } catch {
-    // git may not be configured; silently continue
-  }
 }
 
 // ─── Platform registration ────────────────────────────────────────────────────
@@ -869,6 +860,38 @@ async function handleAi(args) {
   console.log(chalk.gray('This feature will allow you to describe your app and generate a custom stack.\n'));
 }
 
+// ─── Shared API helpers ───────────────────────────────────────────────────────
+
+async function promptCredentials() {
+  const answers = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'username',
+      message: 'Platform username:',
+      validate: input => input.trim() ? true : 'Username cannot be empty.',
+    },
+    {
+      type: 'password',
+      name: 'password',
+      message: 'Platform password:',
+      mask: '*',
+      validate: input => input ? true : 'Password cannot be empty.',
+    },
+  ]);
+  return { username: answers.username.trim(), password: answers.password };
+}
+
+async function apiLogin(apiUrl, username, password) {
+  const res = await fetch(`${apiUrl}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Login failed');
+  return data.token;
+}
+
 // ─── Subcommand: deploy ───────────────────────────────────────────────────────
 
 function parseDeployArgs(args) {
@@ -1217,6 +1240,203 @@ async function handlePluginRemove(pluginName) {
   }
 }
 
+// ─── Subcommand: storage ──────────────────────────────────────────────────────
+
+async function handleStorage(args) {
+  const sub = args[0];
+
+  if (!sub || sub === '--help' || sub === '-h') {
+    console.log(chalk.green.bold('\n📦 AutoDevStack Storage Manager\n'));
+    console.log(chalk.yellow.bold('USAGE:'));
+    console.log(chalk.white('  autodevstack storage status [project]      Show storage stats'));
+    console.log(chalk.white('  autodevstack storage compress <project>    Trigger compression\n'));
+    console.log(chalk.yellow.bold('OPTIONS:'));
+    console.log(chalk.white('  --api-url <url>   Platform API URL (default: http://localhost:4000)\n'));
+    console.log(chalk.yellow.bold('DESCRIPTION:'));
+    console.log(chalk.gray('  Large workspaces (e.g. 5 GB) are automatically compressed to a'));
+    console.log(chalk.gray('  fraction of their original size (e.g. 5 MB) by removing regenerable'));
+    console.log(chalk.gray('  artifacts and applying streaming gzip compression through flow'));
+    console.log(chalk.gray('  traffic pipelines.  All functionality is preserved – dependencies'));
+    console.log(chalk.gray('  are reinstalled from manifests on the next build.\n'));
+    return;
+  }
+
+  // Parse --api-url flag
+  let apiUrl = 'http://localhost:4000';
+  let projectName = null;
+  const remaining = [];
+  for (let i = 1; i < args.length; i++) {
+    if (args[i] === '--api-url' && args[i + 1]) {
+      apiUrl = args[i + 1];
+      i++;
+    } else {
+      remaining.push(args[i]);
+    }
+  }
+  projectName = remaining[0] || null;
+
+  if (sub === 'status') {
+    await handleStorageStatus(projectName, apiUrl);
+    return;
+  }
+
+  if (sub === 'compress') {
+    if (!projectName) {
+      console.log(chalk.red('\n❌ Please specify a project name.\n'));
+      console.log(chalk.gray('  Usage: autodevstack storage compress <project>\n'));
+      process.exit(1);
+    }
+    await handleStorageCompress(projectName, apiUrl);
+    return;
+  }
+
+  console.log(chalk.red(`\n❌ Unknown storage subcommand "${sub}". Try: storage status, storage compress\n`));
+  process.exit(1);
+}
+
+async function handleStorageStatus(projectName, apiUrl) {
+  console.log(chalk.bold('\n🔐 Authenticating with AutoDevStack platform...\n'));
+  let token;
+  try {
+    const { username, password } = await promptCredentials();
+    token = await apiLogin(apiUrl, username, password);
+    console.log(chalk.green('✅ Authenticated.\n'));
+  } catch (err) {
+    console.log(chalk.red(`\n❌ Authentication failed: ${err.message}\n`));
+    process.exit(1);
+  }
+
+  const authHeader = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+  if (!projectName) {
+    // List storage for all projects
+    const spinner = ora('Fetching storage stats...').start();
+    try {
+      const res = await fetch(`${apiUrl}/api/storage`, { headers: authHeader });
+      const data = await res.json();
+      if (!res.ok) {
+        spinner.fail(chalk.red(`Failed: ${data.error}`));
+        process.exit(1);
+      }
+      spinner.succeed(chalk.green('Storage stats:'));
+      const records = data.storage || [];
+      if (records.length === 0) {
+        console.log(chalk.yellow('\n  No storage records found.\n'));
+      } else {
+        console.log(chalk.white('\n  Project'.padEnd(30) + 'Status'.padEnd(14) + 'Original'.padEnd(12) + 'Compressed'.padEnd(12) + 'Ratio'));
+        console.log(chalk.gray('  ' + '─'.repeat(74)));
+        records.forEach(r => {
+          const ratio = r.ratio < 1
+            ? chalk.green(`${(r.ratio * 100).toFixed(1)}%`)
+            : chalk.gray('—');
+          console.log(chalk.white(
+            `  ${(r.projectName || r.projectId).padEnd(30)}` +
+            `${(r.status || 'idle').padEnd(14)}` +
+            `${(r.originalSizeHuman || '0 B').padEnd(12)}` +
+            `${(r.compressedSizeHuman || '0 B').padEnd(12)}` +
+            ratio
+          ));
+        });
+        console.log();
+      }
+    } catch (err) {
+      spinner.fail(chalk.red(`Could not reach platform API: ${err.message}`));
+      process.exit(1);
+    }
+  } else {
+    // Get storage for a specific project – need projectId first
+    const spinner = ora(`Fetching storage stats for "${projectName}"...`).start();
+    try {
+      const listRes = await fetch(`${apiUrl}/api/projects`, { headers: authHeader });
+      const listData = await listRes.json();
+      const project = (listData.projects || []).find(
+        p => p.name.toLowerCase() === projectName.toLowerCase(),
+      );
+      if (!project) {
+        spinner.fail(chalk.red(`Project "${projectName}" not found.`));
+        process.exit(1);
+      }
+
+      const storageRes = await fetch(`${apiUrl}/api/storage/${project.id}`, { headers: authHeader });
+      const storageData = await storageRes.json();
+      if (!storageRes.ok) {
+        spinner.fail(chalk.red(`Failed: ${storageData.error}`));
+        process.exit(1);
+      }
+      spinner.succeed(chalk.green(`Storage stats for "${projectName}":`));
+      const r = storageData.storage;
+      console.log(chalk.white(`\n  Project:            ${r.projectName || r.projectId}`));
+      console.log(chalk.white(`  Status:             ${r.status || 'idle'}`));
+      console.log(chalk.white(`  Original size:      ${r.originalSizeHuman || '0 B'}`));
+      console.log(chalk.white(`  Compressed size:    ${r.compressedSizeHuman || '0 B'}`));
+      console.log(chalk.white(`  Compression ratio:  ${r.ratio < 1 ? `${(r.ratio * 100).toFixed(2)}%` : '—'}`));
+      console.log(chalk.white(`  Threshold:          ${r.thresholdHuman || '5.00 GB'}`));
+      console.log(chalk.white(`  Last compressed:    ${r.lastCompressedAt || 'never'}\n`));
+    } catch (err) {
+      spinner.fail(chalk.red(`Could not reach platform API: ${err.message}`));
+      process.exit(1);
+    }
+  }
+}
+
+async function handleStorageCompress(projectName, apiUrl) {
+  console.log(chalk.bold('\n🔐 Authenticating with AutoDevStack platform...\n'));
+  let token;
+  try {
+    const { username, password } = await promptCredentials();
+    token = await apiLogin(apiUrl, username, password);
+    console.log(chalk.green('✅ Authenticated.\n'));
+  } catch (err) {
+    console.log(chalk.red(`\n❌ Authentication failed: ${err.message}\n`));
+    process.exit(1);
+  }
+
+  const authHeader = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+  const lookupSpinner = ora(`Looking up project "${projectName}"...`).start();
+  let projectId;
+  try {
+    const listRes = await fetch(`${apiUrl}/api/projects`, { headers: authHeader });
+    const listData = await listRes.json();
+    const project = (listData.projects || []).find(
+      p => p.name.toLowerCase() === projectName.toLowerCase(),
+    );
+    if (!project) {
+      lookupSpinner.fail(chalk.red(`Project "${projectName}" not found.`));
+      process.exit(1);
+    }
+    projectId = project.id;
+    lookupSpinner.succeed(chalk.green(`Found project "${project.name}" (${project.id})`));
+  } catch (err) {
+    lookupSpinner.fail(chalk.red(`Could not reach platform API: ${err.message}`));
+    process.exit(1);
+  }
+
+  const compressSpinner = ora(`Requesting compression for "${projectName}"...`).start();
+  try {
+    const res = await fetch(`${apiUrl}/api/storage/${projectId}/compress`, {
+      method: 'POST',
+      headers: authHeader,
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      compressSpinner.fail(chalk.red(`Compression request failed: ${data.error}`));
+      process.exit(1);
+    }
+    compressSpinner.succeed(chalk.green(`Compression job queued (ID: ${data.jobId})`));
+    console.log(chalk.bold('\n📦 Compression Details:'));
+    console.log(chalk.white(`  Project:    ${data.storage.projectName}`));
+    console.log(chalk.white(`  Job ID:     ${data.jobId}`));
+    console.log(chalk.white(`  Status:     ${data.storage.status}`));
+    console.log(chalk.white(`  Threshold:  ${data.storage.thresholdHuman}`));
+    console.log(chalk.gray(`\n  Track progress: GET ${apiUrl}/api/storage/${projectId}\n`));
+    console.log(chalk.green.bold('🗜️  Compression triggered successfully!\n'));
+  } catch (err) {
+    compressSpinner.fail(chalk.red(`Could not reach platform API: ${err.message}`));
+    process.exit(1);
+  }
+}
+
 // ─── Domain management ────────────────────────────────────────────────────────
 
 function getDomainsFilePath() {
@@ -1405,6 +1625,12 @@ function handleDomainRemove(domain) {
       await handleAi(args.slice(1));
     } else if (firstArg === 'plugin') {
       await handlePlugin(args.slice(1));
+    } else if (firstArg === 'deploy') {
+      await handleDeploy(args.slice(1));
+    } else if (firstArg === 'domain') {
+      await handleDomain(args.slice(1));
+    } else if (firstArg === 'storage') {
+      await handleStorage(args.slice(1));
     } else {
       // Legacy / default mode: no subcommand → behave as 'create'
       await handleCreate(args);
