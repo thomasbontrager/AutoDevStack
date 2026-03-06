@@ -9,6 +9,7 @@ This directory contains reference projects scaffolded with AutoDevStack, demonst
 | [`saas/`](saas/) | SaaS Starter | Production SaaS with auth, Stripe billing, and PostgreSQL |
 | [`ai-app/`](ai-app/) | AI App | Full-stack AI app with LangChain, OpenAI/Anthropic, and streaming |
 | [`api/`](api/) | Node + Express | REST API with JWT auth, Zod validation, and Prisma ORM |
+| [`weather-dashboard/`](weather-dashboard/) | Vanilla JS | Responsive weather dashboard — geolocation, 5-day forecast, unit toggle, search history |
 
 ## Contributing an Example
 
