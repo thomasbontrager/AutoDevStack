@@ -143,6 +143,21 @@ services:
 volumes:
   postgres_data:` : ''}
 `;
+  } else if (templateKey === 'monorepo') {
+    // Monorepo: copy docker-compose.yml from the infrastructure/docker directory that was
+    // already scaffolded as part of the template; just create a root convenience file.
+    const infraDockerDir = path.join(projectDir, 'infrastructure', 'docker');
+    const srcCompose = path.join(infraDockerDir, 'docker-compose.yml');
+    if (fs.existsSync(srcCompose)) {
+      // Copy docker-compose.yml to project root for convenience
+      fs.copyFileSync(srcCompose, path.join(projectDir, 'docker-compose.yml'));
+    }
+    // Copy .dockerignore from the template's infrastructure/docker directory to avoid duplication
+    const srcDockerignore = path.join(infraDockerDir, '.dockerignore');
+    if (fs.existsSync(srcDockerignore)) {
+      fs.copyFileSync(srcDockerignore, path.join(projectDir, '.dockerignore'));
+    }
+    return;
   } else if (templateKey === 'default') {
     // React/Vite Dockerfile
     dockerfile = `FROM node:18-alpine as builder
@@ -196,35 +211,6 @@ build
 
 
 (async function main() {
-  // Parse CLI arguments
-  let flags, positionals;
-  try {
-    ({ values: flags, positionals } = parseArgs({
-      args: process.argv.slice(2),
-      options: {
-        stack:    { type: 'string',  short: 's' },
-        template: { type: 'string',  short: 't' },
-        ai:       { type: 'boolean' },
-        git:      { type: 'boolean' },
-        docker:   { type: 'boolean' },
-        help:     { type: 'boolean', short: 'h' },
-      },
-      allowPositionals: true,
-    }));
-  } catch (err) {
-    console.error(chalk.red(`\n❌ ${err.message}\n`));
-    printHelp();
-    process.exit(1);
-  }
-
-  if (flags.help) {
-    printHelp();
-    process.exit(0);
-  }
-
-  console.log(chalk.green.bold("\n🚀 Welcome to AutoDevStack! 🚀"));
-  console.log(chalk.gray("Scaffold your next project in seconds.\n"));
-
   try {
     const flags = parseArgs();
 
