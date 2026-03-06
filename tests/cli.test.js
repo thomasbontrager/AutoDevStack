@@ -281,3 +281,21 @@ describe('create subcommand', () => {
     assert.ok(!hasUnderscoreGitignore, '_gitignore should not remain after scaffolding');
   });
 });
+
+// ─── deploy subcommand ────────────────────────────────────────────────────────
+
+describe('deploy subcommand', () => {
+  test('deploy --help shows usage', () => {
+    const { output, exitCode } = runCLI('deploy --help');
+    assert.equal(exitCode, 0);
+    assert.ok(output.includes('deploy'), 'Expected "deploy" in output');
+    assert.ok(output.includes('--git-url'), 'Expected "--git-url" option');
+    assert.ok(output.includes('--env'), 'Expected "--env" option');
+  });
+
+  test('deploy -h shorthand also shows help', () => {
+    const { output, exitCode } = runCLI('deploy -h');
+    assert.equal(exitCode, 0);
+    assert.ok(output.includes('deploy'), 'Expected deploy help output');
+  });
+});

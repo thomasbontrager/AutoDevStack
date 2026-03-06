@@ -38,6 +38,7 @@ export default function Navbar() {
             <div className="ml-6 flex items-center gap-1">
               {navLink("/dashboard", "Dashboard")}
               {navLink("/projects", "Projects")}
+              {navLink("/billing", "Billing")}
             </div>
           </div>
           <div className="flex items-center gap-4">
