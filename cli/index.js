@@ -38,9 +38,9 @@ export const stackAliases = {
   'ai': 'ai',
 };
 
-// Plugin template registries (populated at startup by loadPlugins)
-const pluginTemplates = {};  // displayName -> { key, path, plugin }
-const pluginAliases = {};    // key -> key (normalised)
+// Plugin registries (populated at startup by loadPlugins)
+const pluginTemplates = {};
+const pluginAliases = {};
 
 // ─── Plugin loader ────────────────────────────────────────────────────────────
 
@@ -53,53 +53,54 @@ function loadPlugins() {
     if (!entry.isDirectory()) continue;
     const manifestPath = path.join(pluginsDir, entry.name, 'plugin.json');
     if (!fs.existsSync(manifestPath)) continue;
-
-    let manifest;
     try {
-      manifest = fs.readJsonSync(manifestPath);
+      const manifest = fs.readJsonSync(manifestPath);
+      if (!Array.isArray(manifest.templates)) continue;
+      for (const tpl of manifest.templates) {
+        const tplPath = tpl.path
+          ? path.resolve(pluginsDir, entry.name, tpl.path)
+          : path.join(__dirname, '..', 'templates', tpl.key);
+        pluginTemplates[tpl.name] = { key: tpl.key, path: tplPath, plugin: manifest.name };
+        pluginAliases[tpl.key.toLowerCase()] = tpl.key;
+      }
     } catch {
-      continue;
-    }
-
-    const pluginName = manifest.name || entry.name;
-
-    for (const tpl of (manifest.templates || [])) {
-      if (!tpl.key) continue;
-      const tplPath = tpl.path
-        ? path.join(pluginsDir, entry.name, tpl.path)
-        : path.join(pluginsDir, entry.name, 'templates', tpl.key);
-
-      pluginTemplates[tpl.name || tpl.key] = {
-        key: tpl.key,
-        path: tplPath,
-        plugin: pluginName,
-      };
-      pluginAliases[tpl.key.toLowerCase()] = tpl.key;
+      // Skip malformed plugin manifests
     }
   }
 }
 
-// Exported stub for test compatibility (actual arg parsing is done inline in main())
-export function parseArgs() {
-  return {};
+// ─── Git initialisation ───────────────────────────────────────────────────────
+
+function initGit(projectDir) {
+  try {
+    execSync('git init', { cwd: projectDir, stdio: 'ignore' });
+    execSync('git add -A', { cwd: projectDir, stdio: 'ignore' });
+    execSync('git commit -m "Initial commit — scaffolded by AutoDevStack"', {
+      cwd: projectDir,
+      stdio: 'ignore',
+    });
+  } catch {
+    // Git may not be available; non-fatal
+  }
 }
 
-// ─── Help ─────────────────────────────────────────────────────────────────────
+// ─── Help ────────────────────────────────────────────────────────────────────
 
 function showHelp() {
   console.log(chalk.green.bold(`\n🚀 AutoDevStack v${CLI_VERSION} CLI\n`));
   console.log(chalk.white("Scaffold production-ready full-stack projects in seconds.\n"));
 
   console.log(chalk.yellow.bold("USAGE:"));
-  console.log(chalk.white("  autodevstack [subcommand] [project-name] [options]\n"));
+  console.log(chalk.white("  autodevstack <subcommand> [project-name] [options]\n"));
 
   console.log(chalk.yellow.bold("SUBCOMMANDS:"));
-  console.log(chalk.white("  create [name]        Create a new project (default if no subcommand)"));
-  console.log(chalk.white("  template             Manage and list templates"));
-  console.log(chalk.white("  ai [description]     AI-powered app generation (coming soon)"));
-  console.log(chalk.white("  plugin               Manage plugins\n"));
+  console.log(chalk.white("  create   <name>      Scaffold a project with any built-in or plugin stack"));
+  console.log(chalk.white("  saas     <name>      Instantly generate a full SaaS stack (Auth + DB + tRPC + Stripe + Dashboard)"));
+  console.log(chalk.white("  template             List all available templates"));
+  console.log(chalk.white("  ai                   AI-powered app generation (coming soon)"));
+  console.log(chalk.white("  plugin               Manage AutoDevStack plugins\n"));
 
-  console.log(chalk.yellow.bold("CREATE OPTIONS:"));
+  console.log(chalk.yellow.bold("OPTIONS (for create / saas):"));
   console.log(chalk.white("  --stack <name>       Specify stack (react, node, next, t3, saas, monorepo, ai)"));
   console.log(chalk.white("  --template <name>    Alias for --stack"));
   console.log(chalk.white("  --git                Initialize Git repository"));
@@ -128,9 +129,9 @@ function showHelp() {
   console.log(chalk.yellow.bold("EXAMPLES:"));
   console.log(chalk.cyan("  autodevstack my-app"));
   console.log(chalk.cyan("  autodevstack my-app --stack next"));
-  console.log(chalk.cyan("  autodevstack create my-saas --template saas --git --docker"));
-  console.log(chalk.cyan("  autodevstack create my-platform --stack monorepo"));
-  console.log(chalk.cyan("  autodevstack ai 'build me a todo app'"));
+  console.log(chalk.cyan("  autodevstack saas my-saas --git --docker"));
+  console.log(chalk.cyan("  autodevstack create my-saas --stack saas --git --docker"));
+  console.log(chalk.cyan("  autodevstack my-platform --stack monorepo"));
   console.log(chalk.cyan("  autodevstack my-ai-app --stack ai --git --docker\n"));
 
   console.log(chalk.yellow.bold("AVAILABLE STACKS:"));
@@ -288,18 +289,6 @@ build
   fs.writeFileSync(path.join(projectDir, '.dockerignore'), dockerignore);
 }
 
-// ─── Git initialisation ───────────────────────────────────────────────────────
-
-function initGit(projectDir) {
-  try {
-    execSync('git init', { cwd: projectDir, stdio: 'ignore' });
-    execSync('git add .', { cwd: projectDir, stdio: 'ignore' });
-    execSync('git commit -m "Initial commit from AutoDevStack"', { cwd: projectDir, stdio: 'ignore' });
-  } catch {
-    // git may not be configured; non-fatal
-  }
-}
-
 // ─── Platform registration ────────────────────────────────────────────────────
 
 async function registerWithPlatform(projectName, templateKey, description, apiUrl) {
@@ -352,7 +341,7 @@ async function registerWithPlatform(projectName, templateKey, description, apiUr
   return registerData.project;
 }
 
-// ─── AI project generation ────────────────────────────────────────────────────
+// ─── AI project generator ─────────────────────────────────────────────────────
 
 async function generateAIProject(flags) {
   const questions = [];
@@ -513,7 +502,7 @@ async function generateAIProject(flags) {
 
 // ─── Argument parsing (create subcommand) ─────────────────────────────────────
 
-function parseCreateArgs(args) {
+export function parseCreateArgs(args) {
   const flags = {
     projectName: null,
     stack: null,
@@ -522,7 +511,6 @@ function parseCreateArgs(args) {
     docker: false,
     register: false,
     apiUrl: null,
-    ai: false,
     help: false,
   };
 
@@ -545,8 +533,6 @@ function parseCreateArgs(args) {
     } else if (arg === '--api-url' && args[i + 1]) {
       flags.apiUrl = args[i + 1];
       i++;
-    } else if (arg === '--ai') {
-      flags.ai = true;
     } else if (!arg.startsWith('-') && !flags.projectName) {
       flags.projectName = arg;
     }
@@ -650,11 +636,11 @@ async function handleCreate(args) {
   }
 
   if (!fs.existsSync(templatePath)) {
-    console.log(chalk.red(`\n❌ Template "${templateKey}" not found at "${templatePath}".\n`));
+    console.log(chalk.red(`\n❌ Template "${templateKey}" not found at ${templatePath}.\n`));
     process.exit(1);
   }
 
-  const spinner = ora(`Scaffolding "${projectName}" with ${selectedStack || templateKey}...`).start();
+  const spinner = ora(`Scaffolding "${projectName}" with the ${templateKey} stack...`).start();
 
   try {
     fs.copySync(templatePath, projectDir);
@@ -666,7 +652,7 @@ async function handleCreate(args) {
       fs.moveSync(gitignoreFrom, gitignoreTo);
     }
 
-    // Inject project name into root package.json
+    // Inject project name into package.json
     const pkgPath = path.join(projectDir, 'package.json');
     if (fs.existsSync(pkgPath)) {
       const pkg = fs.readJsonSync(pkgPath);
@@ -682,15 +668,21 @@ async function handleCreate(args) {
       initGit(projectDir);
     }
 
-    spinner.succeed(chalk.green(`Project "${projectName}" created successfully!`));
+    spinner.succeed(chalk.green(`Project "${projectName}" scaffolded successfully!`));
   } catch (err) {
-    spinner.fail(chalk.red(`Failed to scaffold project "${projectName}".`));
+    spinner.fail(chalk.red('Failed to scaffold project.'));
     throw err;
   }
 
+  // Register with platform API if requested
   if (flags.register) {
     try {
-      const project = await registerWithPlatform(projectName, templateKey, '', flags.apiUrl);
+      const project = await registerWithPlatform(
+        projectName,
+        templateKey,
+        '',
+        flags.apiUrl
+      );
       console.log(chalk.green(`✅ Project registered on platform (ID: ${project.id})`));
     } catch (err) {
       console.log(chalk.yellow(`⚠️  Could not register with platform: ${err.message}`));
@@ -708,6 +700,118 @@ async function handleCreate(args) {
     console.log(chalk.cyan('  npm run dev'));
   }
   console.log(chalk.green.bold('\nHappy coding! 🎉\n'));
+}
+
+// ─── Subcommand: saas ─────────────────────────────────────────────────────────
+
+async function handleSaas(args) {
+  const flags = parseCreateArgs(args);
+
+  if (flags.help) {
+    console.log(chalk.green.bold('\n🚀 AutoDevStack SaaS Generator\n'));
+    console.log(chalk.white('Instantly scaffold a production-ready SaaS stack.\n'));
+    console.log(chalk.yellow.bold('USAGE:'));
+    console.log(chalk.white('  autodevstack saas <project-name> [options]\n'));
+    console.log(chalk.yellow.bold('OPTIONS:'));
+    console.log(chalk.white('  --git      Initialize Git repository'));
+    console.log(chalk.white('  --help     Show this help message\n'));
+    console.log(chalk.yellow.bold('INCLUDES (always generated):'));
+    console.log(chalk.white('  • Auth           NextAuth.js (GitHub, Google, Email)'));
+    console.log(chalk.white('  • Database       Prisma ORM + PostgreSQL'));
+    console.log(chalk.white('  • API            tRPC (type-safe end-to-end)'));
+    console.log(chalk.white('  • Payments       Stripe (subscriptions + webhooks)'));
+    console.log(chalk.white('  • Dashboard      Protected admin & user dashboard'));
+    console.log(chalk.white('  • Deployment     Dockerfile + docker-compose.yml (always included)\n'));
+    process.exit(0);
+  }
+
+  const questions = [];
+
+  if (!flags.projectName) {
+    questions.push({
+      type: 'input',
+      name: 'projectName',
+      message: 'SaaS project name:',
+      validate: (input) => {
+        if (!input.trim()) return 'Project name cannot be empty.';
+        if (!/^[a-z0-9-_]+$/i.test(input.trim())) return 'Project name can only contain letters, numbers, dashes, and underscores.';
+        return true;
+      },
+    });
+  }
+
+  const answers = questions.length > 0 ? await inquirer.prompt(questions) : {};
+  const projectName = (flags.projectName || answers.projectName).trim();
+  const projectDir = path.join(process.cwd(), projectName);
+
+  if (fs.existsSync(projectDir)) {
+    console.log(chalk.red(`\n❌ Folder "${projectName}" already exists. Choose a different name.\n`));
+    process.exit(1);
+  }
+
+  const templatePath = path.join(__dirname, '..', 'templates', 'saas');
+
+  if (!fs.existsSync(templatePath)) {
+    console.log(chalk.red('\n❌ SaaS template not found.\n'));
+    process.exit(1);
+  }
+
+  const spinner = ora(`Generating SaaS project "${projectName}"...`).start();
+
+  try {
+    fs.copySync(templatePath, projectDir);
+
+    // Rename _gitignore → .gitignore if present
+    const gitignoreFrom = path.join(projectDir, '_gitignore');
+    const gitignoreTo   = path.join(projectDir, '.gitignore');
+    if (fs.existsSync(gitignoreFrom)) {
+      fs.moveSync(gitignoreFrom, gitignoreTo);
+    }
+
+    // Inject project name into package.json
+    const pkgPath = path.join(projectDir, 'package.json');
+    if (fs.existsSync(pkgPath)) {
+      const pkg = fs.readJsonSync(pkgPath);
+      pkg.name = projectName;
+      fs.writeJsonSync(pkgPath, pkg, { spaces: 2 });
+    }
+
+    // Always add Docker support for the SaaS generator: PostgreSQL is a hard
+    // dependency of the SaaS stack (Prisma requires a running database), so
+    // Dockerfile + docker-compose.yml with a postgres service are generated
+    // unconditionally to ensure the project is immediately runnable.
+    addDockerSupport(projectDir, 'saas');
+
+    if (flags.git) {
+      initGit(projectDir);
+    }
+
+    spinner.succeed(chalk.green(`SaaS project "${projectName}" generated successfully!`));
+  } catch (err) {
+    spinner.fail(chalk.red('Failed to generate SaaS project.'));
+    throw err;
+  }
+
+  console.log(chalk.magenta(`\n🎉 Your SaaS stack is ready!\n`));
+  console.log(chalk.bold('Stack:'));
+  console.log(chalk.gray('  • Framework:  Next.js + TypeScript + Tailwind CSS'));
+  console.log(chalk.gray('  • Auth:       NextAuth.js (GitHub, Google, Email providers)'));
+  console.log(chalk.gray('  • Database:   Prisma ORM + PostgreSQL'));
+  console.log(chalk.gray('  • API:        tRPC (fully type-safe end-to-end)'));
+  console.log(chalk.gray('  • Payments:   Stripe (subscriptions + webhooks)'));
+  console.log(chalk.gray('  • Dashboard:  Protected admin & user dashboard\n'));
+  console.log(chalk.bold('Next steps:'));
+  console.log(chalk.cyan(`  cd ${projectName}`));
+  console.log(chalk.cyan('  cp .env.example .env'));
+  console.log(chalk.cyan('  # Fill in .env: DATABASE_URL, NEXTAUTH_SECRET, Stripe keys, OAuth IDs'));
+  console.log(chalk.cyan('  npm install'));
+  console.log(chalk.cyan('  docker-compose up -d       # start PostgreSQL'));
+  console.log(chalk.cyan('  npm run db:migrate         # apply Prisma migrations'));
+  console.log(chalk.cyan('  npm run dev                # start dev server on http://localhost:3000'));
+  console.log(chalk.bold('\nDeployment:'));
+  console.log(chalk.cyan('  docker-compose up --build  # build & run full stack'));
+  console.log(chalk.gray('  Or deploy to Vercel / Railway / Render with the included config.\n'));
+  console.log(chalk.green.bold('Happy building! 🚀💰\n'));
 }
 
 // ─── Subcommand: template ─────────────────────────────────────────────────────
@@ -1278,6 +1382,8 @@ function handleDomainRemove(domain) {
   try {
     if (firstArg === 'create') {
       await handleCreate(args.slice(1));
+    } else if (firstArg === 'saas') {
+      await handleSaas(args.slice(1));
     } else if (firstArg === 'template') {
       await handleTemplate(args.slice(1));
     } else if (firstArg === 'ai') {
