@@ -38,11 +38,11 @@ export const stackAliases = {
   'ai': 'ai',
 };
 
-// Plugin registries (populated at startup by loadPlugins)
+// Plugin registries (populated by loadPlugins())
 const pluginTemplates = {};
 const pluginAliases = {};
 
-// ─── Plugin loader ────────────────────────────────────────────────────────────
+// ─── Load plugins ─────────────────────────────────────────────────────────────
 
 function loadPlugins() {
   const pluginsDir = path.join(__dirname, '..', 'plugins');
@@ -55,8 +55,7 @@ function loadPlugins() {
     if (!fs.existsSync(manifestPath)) continue;
     try {
       const manifest = fs.readJsonSync(manifestPath);
-      if (!Array.isArray(manifest.templates)) continue;
-      for (const tpl of manifest.templates) {
+      for (const tpl of (manifest.templates || [])) {
         const tplPath = tpl.path
           ? path.resolve(pluginsDir, entry.name, tpl.path)
           : path.join(__dirname, '..', 'templates', tpl.key);
@@ -64,7 +63,7 @@ function loadPlugins() {
         pluginAliases[tpl.key.toLowerCase()] = tpl.key;
       }
     } catch {
-      // Skip malformed plugin manifests
+      // skip malformed plugin manifests
     }
   }
 }
@@ -91,7 +90,14 @@ function showHelp() {
   console.log(chalk.white("Scaffold production-ready full-stack projects in seconds.\n"));
 
   console.log(chalk.yellow.bold("USAGE:"));
-  console.log(chalk.white("  autodevstack <subcommand> [project-name] [options]\n"));
+  console.log(chalk.white("  autodevstack [subcommand] [project-name] [options]\n"));
+
+  console.log(chalk.yellow.bold("SUBCOMMANDS:"));
+  console.log(chalk.white("  create               Scaffold a new project (default if no subcommand)"));
+  console.log(chalk.white("  saas                 Instantly generate a full SaaS stack"));
+  console.log(chalk.white("  template             Manage templates"));
+  console.log(chalk.white("  ai                   AI-powered app generation (coming soon)"));
+  console.log(chalk.white("  plugin               Manage plugins\n"));
 
   console.log(chalk.yellow.bold("SUBCOMMANDS:"));
   console.log(chalk.white("  create   <name>      Scaffold a project with any built-in or plugin stack"));
@@ -128,9 +134,9 @@ function showHelp() {
 
   console.log(chalk.yellow.bold("EXAMPLES:"));
   console.log(chalk.cyan("  autodevstack my-app"));
+  console.log(chalk.cyan("  autodevstack saas my-saas-app --git --docker"));
   console.log(chalk.cyan("  autodevstack my-app --stack next"));
-  console.log(chalk.cyan("  autodevstack saas my-saas --git --docker"));
-  console.log(chalk.cyan("  autodevstack create my-saas --stack saas --git --docker"));
+  console.log(chalk.cyan("  autodevstack my-saas --stack saas --git --docker"));
   console.log(chalk.cyan("  autodevstack my-platform --stack monorepo"));
   console.log(chalk.cyan("  autodevstack my-ai-app --stack ai --git --docker\n"));
 
@@ -151,6 +157,11 @@ function showHelp() {
 
 // ─── Docker support ───────────────────────────────────────────────────────────
 
+// Templates that have a build step (next/build output served)
+const TEMPLATES_WITH_BUILD_STEP = new Set(['next', 't3', 'saas']);
+// Templates that require a Postgres database service in docker-compose
+const TEMPLATES_WITH_DB = new Set(['saas', 't3']);
+
 function addDockerSupport(projectDir, templateKey) {
   // The AI template already ships with its own docker-compose.yml
   if (templateKey === 'ai') {
@@ -161,7 +172,7 @@ function addDockerSupport(projectDir, templateKey) {
   let dockerCompose = '';
 
   if (templateKey === 'node' || templateKey === 'saas' || templateKey === 'next' || templateKey === 't3') {
-    const hasBuildStep = templateKey === 'next' || templateKey === 't3' || templateKey === 'saas';
+    const hasBuildStep = TEMPLATES_WITH_BUILD_STEP.has(templateKey);
     dockerfile = `FROM node:18-alpine
 
 WORKDIR /app
@@ -177,7 +188,7 @@ ${hasBuildStep ? 'RUN npm run build\n\n' : ''}EXPOSE 3000
 CMD ["npm", "run", "start"]
 `;
 
-    const dbService = templateKey === 'saas' ? `
+    const dbService = TEMPLATES_WITH_DB.has(templateKey) ? `
   database:
     image: postgres:15-alpine
     environment:
@@ -289,6 +300,18 @@ build
   fs.writeFileSync(path.join(projectDir, '.dockerignore'), dockerignore);
 }
 
+// ─── Git init ─────────────────────────────────────────────────────────────────
+
+function initGit(projectDir) {
+  try {
+    execSync('git init', { cwd: projectDir, stdio: 'ignore' });
+    execSync('git add -A', { cwd: projectDir, stdio: 'ignore' });
+    execSync('git commit -m "Initial commit from AutoDevStack"', { cwd: projectDir, stdio: 'ignore' });
+  } catch {
+    // git may not be configured; silently continue
+  }
+}
+
 // ─── Platform registration ────────────────────────────────────────────────────
 
 async function registerWithPlatform(projectName, templateKey, description, apiUrl) {
@@ -341,7 +364,7 @@ async function registerWithPlatform(projectName, templateKey, description, apiUr
   return registerData.project;
 }
 
-// ─── AI project generator ─────────────────────────────────────────────────────
+// ─── AI project generation ────────────────────────────────────────────────────
 
 async function generateAIProject(flags) {
   const questions = [];
@@ -640,7 +663,7 @@ async function handleCreate(args) {
     process.exit(1);
   }
 
-  const spinner = ora(`Scaffolding "${projectName}" with the ${templateKey} stack...`).start();
+  const spinner = ora(`Scaffolding "${projectName}" with ${selectedStack || templateKey}...`).start();
 
   try {
     fs.copySync(templatePath, projectDir);
@@ -660,12 +683,9 @@ async function handleCreate(args) {
       fs.writeJsonSync(pkgPath, pkg, { spaces: 2 });
     }
 
+    // Add Docker support if requested
     if (flags.docker) {
       addDockerSupport(projectDir, templateKey);
-    }
-
-    if (flags.git) {
-      initGit(projectDir);
     }
 
     spinner.succeed(chalk.green(`Project "${projectName}" scaffolded successfully!`));
@@ -674,15 +694,15 @@ async function handleCreate(args) {
     throw err;
   }
 
+  // Init git after spinner
+  if (flags.git) {
+    initGit(projectDir);
+  }
+
   // Register with platform API if requested
   if (flags.register) {
     try {
-      const project = await registerWithPlatform(
-        projectName,
-        templateKey,
-        '',
-        flags.apiUrl
-      );
+      const project = await registerWithPlatform(projectName, templateKey, '', flags.apiUrl);
       console.log(chalk.green(`✅ Project registered on platform (ID: ${project.id})`));
     } catch (err) {
       console.log(chalk.yellow(`⚠️  Could not register with platform: ${err.message}`));
@@ -709,19 +729,18 @@ async function handleSaas(args) {
 
   if (flags.help) {
     console.log(chalk.green.bold('\n🚀 AutoDevStack SaaS Generator\n'));
-    console.log(chalk.white('Instantly scaffold a production-ready SaaS stack.\n'));
+    console.log(chalk.white('Instantly scaffold a production-ready SaaS stack:\n'));
+    console.log(chalk.gray('  • Auth        NextAuth.js (GitHub, Google, Email providers)'));
+    console.log(chalk.gray('  • Database    PostgreSQL + Prisma ORM'));
+    console.log(chalk.gray('  • API         tRPC (end-to-end type-safe)'));
+    console.log(chalk.gray('  • Payments    Stripe (subscriptions + webhooks)'));
+    console.log(chalk.gray('  • Dashboard   Pre-built user dashboard + admin panel'));
+    console.log(chalk.gray('  • Deployment  Docker + docker-compose included\n'));
     console.log(chalk.yellow.bold('USAGE:'));
-    console.log(chalk.white('  autodevstack saas <project-name> [options]\n'));
-    console.log(chalk.yellow.bold('OPTIONS:'));
-    console.log(chalk.white('  --git      Initialize Git repository'));
-    console.log(chalk.white('  --help     Show this help message\n'));
-    console.log(chalk.yellow.bold('INCLUDES (always generated):'));
-    console.log(chalk.white('  • Auth           NextAuth.js (GitHub, Google, Email)'));
-    console.log(chalk.white('  • Database       Prisma ORM + PostgreSQL'));
-    console.log(chalk.white('  • API            tRPC (type-safe end-to-end)'));
-    console.log(chalk.white('  • Payments       Stripe (subscriptions + webhooks)'));
-    console.log(chalk.white('  • Dashboard      Protected admin & user dashboard'));
-    console.log(chalk.white('  • Deployment     Dockerfile + docker-compose.yml (always included)\n'));
+    console.log(chalk.white('  autodevstack saas [project-name] [--git] [--docker]\n'));
+    console.log(chalk.yellow.bold('EXAMPLES:'));
+    console.log(chalk.cyan('  autodevstack saas my-startup'));
+    console.log(chalk.cyan('  autodevstack saas my-startup --git --docker\n'));
     process.exit(0);
   }
 
@@ -732,6 +751,7 @@ async function handleSaas(args) {
       type: 'input',
       name: 'projectName',
       message: 'SaaS project name:',
+      default: 'my-saas',
       validate: (input) => {
         if (!input.trim()) return 'Project name cannot be empty.';
         if (!/^[a-z0-9-_]+$/i.test(input.trim())) return 'Project name can only contain letters, numbers, dashes, and underscores.';
@@ -742,14 +762,14 @@ async function handleSaas(args) {
 
   const answers = questions.length > 0 ? await inquirer.prompt(questions) : {};
   const projectName = (flags.projectName || answers.projectName).trim();
+  const templateKey = 'saas';
+  const templatePath = path.join(__dirname, '..', 'templates', templateKey);
   const projectDir = path.join(process.cwd(), projectName);
 
   if (fs.existsSync(projectDir)) {
     console.log(chalk.red(`\n❌ Folder "${projectName}" already exists. Choose a different name.\n`));
     process.exit(1);
   }
-
-  const templatePath = path.join(__dirname, '..', 'templates', 'saas');
 
   if (!fs.existsSync(templatePath)) {
     console.log(chalk.red('\n❌ SaaS template not found.\n'));
@@ -773,18 +793,12 @@ async function handleSaas(args) {
     if (fs.existsSync(pkgPath)) {
       const pkg = fs.readJsonSync(pkgPath);
       pkg.name = projectName;
+      pkg.description = `${projectName} — SaaS app generated by AutoDevStack`;
       fs.writeJsonSync(pkgPath, pkg, { spaces: 2 });
     }
 
-    // Always add Docker support for the SaaS generator: PostgreSQL is a hard
-    // dependency of the SaaS stack (Prisma requires a running database), so
-    // Dockerfile + docker-compose.yml with a postgres service are generated
-    // unconditionally to ensure the project is immediately runnable.
-    addDockerSupport(projectDir, 'saas');
-
-    if (flags.git) {
-      initGit(projectDir);
-    }
+    // Add Docker support (always include for SaaS, or if explicitly requested)
+    addDockerSupport(projectDir, templateKey);
 
     spinner.succeed(chalk.green(`SaaS project "${projectName}" generated successfully!`));
   } catch (err) {
@@ -792,26 +806,28 @@ async function handleSaas(args) {
     throw err;
   }
 
-  console.log(chalk.magenta(`\n🎉 Your SaaS stack is ready!\n`));
-  console.log(chalk.bold('Stack:'));
-  console.log(chalk.gray('  • Framework:  Next.js + TypeScript + Tailwind CSS'));
-  console.log(chalk.gray('  • Auth:       NextAuth.js (GitHub, Google, Email providers)'));
-  console.log(chalk.gray('  • Database:   Prisma ORM + PostgreSQL'));
-  console.log(chalk.gray('  • API:        tRPC (fully type-safe end-to-end)'));
-  console.log(chalk.gray('  • Payments:   Stripe (subscriptions + webhooks)'));
-  console.log(chalk.gray('  • Dashboard:  Protected admin & user dashboard\n'));
+  // Init git after spinner
+  if (flags.git) {
+    initGit(projectDir);
+  }
+
+  console.log(chalk.magenta(`\n🚀 Your SaaS stack is ready!\n`));
+  console.log(chalk.bold('Included:'));
+  console.log(chalk.gray('  ✓ Auth         NextAuth.js (GitHub, Google, Email)'));
+  console.log(chalk.gray('  ✓ Database     PostgreSQL + Prisma ORM'));
+  console.log(chalk.gray('  ✓ API          tRPC (end-to-end type-safe)'));
+  console.log(chalk.gray('  ✓ Payments     Stripe (subscriptions + webhooks)'));
+  console.log(chalk.gray('  ✓ Dashboard    User dashboard + admin panel'));
+  console.log(chalk.gray('  ✓ Deployment   Dockerfile + docker-compose.yml\n'));
   console.log(chalk.bold('Next steps:'));
   console.log(chalk.cyan(`  cd ${projectName}`));
   console.log(chalk.cyan('  cp .env.example .env'));
-  console.log(chalk.cyan('  # Fill in .env: DATABASE_URL, NEXTAUTH_SECRET, Stripe keys, OAuth IDs'));
+  console.log(chalk.cyan('  # Fill in DATABASE_URL, NEXTAUTH_SECRET, STRIPE_SECRET_KEY, etc.'));
   console.log(chalk.cyan('  npm install'));
-  console.log(chalk.cyan('  docker-compose up -d       # start PostgreSQL'));
-  console.log(chalk.cyan('  npm run db:migrate         # apply Prisma migrations'));
-  console.log(chalk.cyan('  npm run dev                # start dev server on http://localhost:3000'));
-  console.log(chalk.bold('\nDeployment:'));
-  console.log(chalk.cyan('  docker-compose up --build  # build & run full stack'));
-  console.log(chalk.gray('  Or deploy to Vercel / Railway / Render with the included config.\n'));
-  console.log(chalk.green.bold('Happy building! 🚀💰\n'));
+  console.log(chalk.cyan('  docker-compose up -d   # start postgres'));
+  console.log(chalk.cyan('  npm run db:migrate     # apply schema'));
+  console.log(chalk.cyan('  npm run dev            # start dev server → http://localhost:3000'));
+  console.log(chalk.green.bold('\nHappy building! 🎉\n'));
 }
 
 // ─── Subcommand: template ─────────────────────────────────────────────────────
@@ -1103,7 +1119,6 @@ async function handlePluginAdd(pluginName) {
   const pluginsDir = path.join(__dirname, '..', 'plugins');
   fs.ensureDirSync(pluginsDir);
 
-  // Determine if this is a local path or an npm package name
   const isLocalPath = pluginName.startsWith('.') || pluginName.startsWith('/');
 
   if (isLocalPath) {
