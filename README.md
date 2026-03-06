@@ -12,6 +12,7 @@ Stop copy-pasting boilerplate. AutoDevStack is a zero-config CLI that spins up b
 
 ## Demo
 
+**Interactive mode:**
 ```
 🚀 Welcome to AutoDevStack! 🚀
 Scaffold your next project in seconds.
@@ -22,6 +23,8 @@ Scaffold your next project in seconds.
     Node + Express + TypeScript
     Next.js
     T3 Stack (Next.js + Tailwind + tRPC + Prisma)
+    SaaS Starter (Next.js + Prisma + Stripe + Tailwind)
+    Monorepo (apps + services + packages)
 
 ⠋ Creating project "my-app"...
 ✔ Project "my-app" created successfully!
@@ -36,6 +39,18 @@ Next steps:
 Happy coding! 🎉
 ```
 
+**Command-line mode:**
+```bash
+# Quick setup with flags
+npx autodevstack my-saas --template saas --git --docker
+
+# Skip all prompts
+npx autodevstack my-app --stack next
+
+# See all options
+npx autodevstack --help
+```
+
 ---
 
 ## Features
@@ -43,6 +58,10 @@ Happy coding! 🎉
 - ⚡ **Instant scaffolding** — project ready in under 5 seconds
 - 🎯 **Curated templates** — hand-crafted, opinionated starters that just work
 - 🔧 **Zero config** — sensible defaults out of the box
+- 🚀 **CLI arguments** — skip prompts with `--stack`, `--git`, `--docker` flags
+- 💼 **SaaS template** — production-ready SaaS with auth, billing, and database
+- 📦 **Monorepo support** — Turborepo-powered monorepo scaffolding
+- 🐳 **Docker ready** — add containerization with `--docker` flag
 - 🔌 **Plugin-ready** — extend with community or custom plugins (see [`plugins/`](plugins/))
 - 📦 **Auto name injection** — project name is set in `package.json` automatically
 - 🔒 **`.gitignore` handling** — template `_gitignore` files are renamed on copy
@@ -54,10 +73,23 @@ Happy coding! 🎉
 **Option 1 — Run directly with npx (once published):**
 
 ```bash
-npx autodevstack
+npx autodevstack my-app
 ```
 
-**Option 2 — Clone and run locally:**
+**Option 2 — With command-line arguments:**
+
+```bash
+# Create a SaaS app with Git and Docker
+npx autodevstack my-saas --template saas --git --docker
+
+# Create a Next.js app
+npx autodevstack my-app --stack next
+
+# Create a monorepo
+npx autodevstack my-platform --stack monorepo
+```
+
+**Option 3 — Clone and run locally:**
 
 ```bash
 git clone https://github.com/thomasbontrager/AutoDevStack.git
@@ -66,7 +98,7 @@ npm install
 node cli/index.js
 ```
 
-**Option 3 — Global install via npm link:**
+**Option 4 — Global install via npm link:**
 
 ```bash
 git clone https://github.com/thomasbontrager/AutoDevStack.git
@@ -88,6 +120,8 @@ Templates live in the [`templates/`](templates/) directory. Each template is a s
 | Node + Express + TypeScript | [`templates/node/`](templates/node/) | Lightweight REST API server |
 | Next.js | [`templates/next/`](templates/next/) | Full-stack React framework with file-based routing |
 | T3 Stack | [`templates/t3/`](templates/t3/) | Next.js + Tailwind CSS + tRPC + Prisma |
+| **SaaS Starter** | [`templates/saas/`](templates/saas/) | **Production SaaS with auth, billing, and database** |
+| **Monorepo** | [`templates/monorepo/`](templates/monorepo/) | **Turborepo monorepo with apps, services, and packages** |
 
 ### Adding a Template
 
@@ -113,7 +147,9 @@ AutoDevStack/
 │   ├── default/    # React + TypeScript + Vite
 │   ├── node/       # Node + Express + TypeScript
 │   ├── next/       # Next.js
-│   └── t3/         # T3 Stack
+│   ├── t3/         # T3 Stack
+│   ├── saas/       # SaaS Starter (NEW!)
+│   └── monorepo/   # Monorepo (NEW!)
 ├── examples/       # Example projects built with AutoDevStack
 ├── docs/           # Extended documentation
 ├── plugins/        # Plugin system (extensibility)
