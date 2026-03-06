@@ -21,6 +21,9 @@ COPY --from=builder /app/.next ./.next
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/package*.json ./
 
+RUN addgroup -S nextjs && adduser -S nextjs -G nextjs
+RUN chown -R nextjs:nextjs /app
+USER nextjs
 EXPOSE 3000
 
 CMD ["npm", "start"]
