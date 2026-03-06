@@ -12,7 +12,7 @@ Thank you for considering contributing to AutoDevStack! 🎉
    - Config files (e.g., `tsconfig.json`, framework config)
    - `_gitignore` — will be renamed to `.gitignore` on scaffold
 
-2. Register your stack in `index.js`:
+2. Register your stack in `cli/index.js`:
    ```js
    const stacks = {
      // ... existing stacks
@@ -22,7 +22,7 @@ Thank you for considering contributing to AutoDevStack! 🎉
 
 3. Test it locally:
    ```bash
-   node index.js
+   node cli/index.js
    # Choose your new stack and verify the output project works
    ```
 
@@ -38,7 +38,7 @@ Thank you for considering contributing to AutoDevStack! 🎉
 git clone https://github.com/thomasbontrager/AutoDevStack.git
 cd AutoDevStack
 npm install
-node index.js
+node cli/index.js
 ```
 
 ## Pull Request Guidelines

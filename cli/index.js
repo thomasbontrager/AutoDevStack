@@ -48,7 +48,7 @@ const stacks = {
     }
 
     const templateKey = stacks[answers.stack];
-    const templatePath = path.join(__dirname, 'templates', templateKey);
+    const templatePath = path.join(__dirname, '..', 'templates', templateKey);
 
     if (!fs.existsSync(templatePath)) {
       console.log(chalk.red(`\n❌ Template for "${answers.stack}" not found.\n`));
