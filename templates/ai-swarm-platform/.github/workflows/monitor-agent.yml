@@ -1,0 +1,97 @@
+name: Monitor Agent
+
+on:
+  schedule:
+    # Run every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run monitoring
+        run: npm run monitor
+
+      - name: Collect metrics
+        if: always()
+        run: |
+          if [ -f config/analytics.json ]; then
+            echo "## 📊 Swarm Metrics" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            # Extract key metrics
+            TOTAL_AGENTS=$(jq -r '.totalAgents // 0' config/analytics.json)
+            TOTAL_REPOS=$(jq -r '.totalRepos // 0' config/analytics.json)
+            TIMESTAMP=$(jq -r '.timestamp // "N/A"' config/analytics.json)
+
+            echo "- **Total Agents**: $TOTAL_AGENTS" >> $GITHUB_STEP_SUMMARY
+            echo "- **Total Repos**: $TOTAL_REPOS" >> $GITHUB_STEP_SUMMARY
+            echo "- **Last Update**: $TIMESTAMP" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+
+            # Agent details
+            echo "### Agent Performance" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            jq '.agents' config/analytics.json >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ No analytics data available" >> $GITHUB_STEP_SUMMARY
+            echo "Run the swarm first: \`npm run swarm\`" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Check for anomalies
+        if: always()
+        run: |
+          if [ -f config/analytics.json ]; then
+            node -e "
+              const fs = require('fs');
+              const analytics = JSON.parse(fs.readFileSync('config/analytics.json', 'utf-8'));
+
+              // Check for issues
+              const issues = [];
+
+              if (analytics.totalAgents === 0) {
+                issues.push('No agents active');
+              }
+
+              if (analytics.agents) {
+                analytics.agents.forEach(agent => {
+                  if (agent.tasksCompleted === 0) {
+                    issues.push(\`Agent \${agent.id} has not completed any tasks\`);
+                  }
+                });
+              }
+
+              if (issues.length > 0) {
+                console.log('⚠️  Issues detected:');
+                issues.forEach(issue => console.log(\`  - \${issue}\`));
+                console.log('');
+              } else {
+                console.log('✅ No anomalies detected');
+              }
+            "
+          fi
+
+      - name: Upload monitoring report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: monitoring-report-${{ github.run_number }}
+          path: |
+            config/analytics.json
+            config/viral-repos.json
+          retention-days: 90

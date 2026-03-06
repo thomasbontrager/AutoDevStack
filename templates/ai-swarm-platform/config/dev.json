@@ -1,0 +1,49 @@
+{
+  "environment": "dev",
+  "version": "1.0.0",
+  "generated_at": "2026-03-06T00:00:00.000Z",
+  "swarm": {
+    "max_agents": 3,
+    "agent_types": [
+      "code_generator",
+      "pr_manager",
+      "qa_validator"
+    ],
+    "coordination_strategy": "distributed",
+    "spawn_interval": 5000,
+    "auto_restart": true
+  },
+  "repository": {
+    "auto_create": true,
+    "pr_strategy": "feature_branch",
+    "branch_naming": "ai-swarm/{agent_id}/{task_id}",
+    "auto_merge": false,
+    "require_reviews": false
+  },
+  "analytics": {
+    "tracking_enabled": true,
+    "metrics_to_collect": [
+      "repo_created",
+      "pr_opened",
+      "pr_merged",
+      "agent_activity",
+      "task_completion"
+    ],
+    "export_interval": 3600000
+  },
+  "deployment": {
+    "auto_deploy": true,
+    "health_checks": true,
+    "scaling": {
+      "enabled": false,
+      "min_agents": 1,
+      "max_agents": 3
+    }
+  },
+  "ai": {
+    "provider": "openai",
+    "model": "gpt-4",
+    "temperature": 0.7,
+    "max_tokens": 1000
+  }
+}
