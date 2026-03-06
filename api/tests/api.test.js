@@ -450,168 +450,111 @@ describe('POST /api/billing/cancel', () => {
   });
 });
 
-// ─── Compression API ──────────────────────────────────────────────────────────
+// ─── Storage API ─────────────────────────────────────────────────────────────
 
-describe('POST /api/compression/analyze', () => {
-  let projectId;
-
-  before(async () => {
-    const res = await request('POST', '/api/projects/create', {
-      name: 'compression-test-project',
-      stack: 'node',
-    }, { Authorization: `Bearer ${authToken}` });
-    projectId = res.body.project.id;
-  });
-
+describe('GET /api/storage', () => {
   test('returns 401 without auth token', async () => {
-    const res = await request('POST', '/api/compression/analyze', { projectId });
+    const res = await request('GET', '/api/storage');
     assert.equal(res.status, 401);
   });
 
-  test('returns 400 when projectId is missing', async () => {
-    const res = await request('POST', '/api/compression/analyze', {}, {
+  test('returns empty storage list for new user', async () => {
+    const res = await request('GET', '/api/storage', null, {
       Authorization: `Bearer ${authToken}`,
     });
-    assert.equal(res.status, 400);
-    assert.ok(res.body.error);
-  });
-
-  test('returns 404 for nonexistent project', async () => {
-    const res = await request('POST', '/api/compression/analyze', {
-      projectId: 'proj_nonexistent',
-    }, { Authorization: `Bearer ${authToken}` });
-    assert.equal(res.status, 404);
-  });
-
-  test('returns analysis for a valid project', async () => {
-    const res = await request('POST', '/api/compression/analyze', {
-      projectId,
-    }, { Authorization: `Bearer ${authToken}` });
     assert.equal(res.status, 200);
-    assert.equal(res.body.projectId, projectId);
-    assert.ok(res.body.analysis);
-    assert.ok(typeof res.body.analysis.sizeBytes === 'number');
-    assert.ok(typeof res.body.analysis.needsCompression === 'boolean');
-    assert.ok(typeof res.body.analysis.thresholdBytes === 'number');
-    assert.ok(typeof res.body.analysis.targetBytes === 'number');
+    assert.ok(Array.isArray(res.body.storage));
   });
 });
 
-describe('POST /api/compression/compress', () => {
-  let projectId;
+describe('GET /api/storage/:projectId', () => {
+  let storageProjectId;
 
   before(async () => {
     const res = await request('POST', '/api/projects/create', {
-      name: 'compress-trigger-project',
-      stack: 'next',
+      name: 'storage-test-project',
+      stack: 'node',
     }, { Authorization: `Bearer ${authToken}` });
-    projectId = res.body.project.id;
+    storageProjectId = res.body.project.id;
   });
 
   test('returns 401 without auth token', async () => {
-    const res = await request('POST', '/api/compression/compress', { projectId });
+    const res = await request('GET', `/api/storage/${storageProjectId}`);
     assert.equal(res.status, 401);
   });
 
-  test('returns 400 when projectId is missing', async () => {
-    const res = await request('POST', '/api/compression/compress', {}, {
+  test('returns 404 for nonexistent project', async () => {
+    const res = await request('GET', '/api/storage/proj_nonexistent', null, {
       Authorization: `Bearer ${authToken}`,
     });
-    assert.equal(res.status, 400);
-    assert.ok(res.body.error);
-  });
-
-  test('returns 404 for nonexistent project', async () => {
-    const res = await request('POST', '/api/compression/compress', {
-      projectId: 'proj_nonexistent',
-    }, { Authorization: `Bearer ${authToken}` });
     assert.equal(res.status, 404);
   });
 
-  test('returns 400 when project is below threshold and force is not set', async () => {
-    const res = await request('POST', '/api/compression/compress', {
-      projectId,
+  test('returns default storage record for project with no compression history', async () => {
+    const res = await request('GET', `/api/storage/${storageProjectId}`, null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.storage);
+    assert.equal(res.body.storage.projectId, storageProjectId);
+    assert.equal(res.body.storage.status, 'idle');
+    assert.ok(res.body.storage.thresholdHuman);
+  });
+});
+
+describe('POST /api/storage/:projectId/compress', () => {
+  let compressProjectId;
+
+  before(async () => {
+    const res = await request('POST', '/api/projects/create', {
+      name: 'compress-test-project',
+      stack: 'node',
     }, { Authorization: `Bearer ${authToken}` });
-    assert.equal(res.status, 400);
-    assert.ok(res.body.error);
+    compressProjectId = res.body.project.id;
   });
 
-  test('accepts compression with force=true', async () => {
-    const res = await request('POST', '/api/compression/compress', {
-      projectId,
-      force: true,
+  test('returns 401 without auth token', async () => {
+    const res = await request('POST', `/api/storage/${compressProjectId}/compress`, {});
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 404 for nonexistent project', async () => {
+    const res = await request('POST', '/api/storage/proj_nonexistent/compress', {}, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test('queues a compression job for the project', async () => {
+    const res = await request('POST', `/api/storage/${compressProjectId}/compress`, {
+      originalSizeBytes: 5368709120,
     }, { Authorization: `Bearer ${authToken}` });
     assert.equal(res.status, 202);
-    assert.ok(res.body.compressionId);
-    assert.equal(res.body.status, 'queued');
+    assert.ok(res.body.jobId);
+    assert.ok(res.body.storage);
+    assert.equal(res.body.storage.status, 'compressing');
+    assert.equal(res.body.storage.originalSizeBytes, 5368709120);
+  });
+
+  test('returns 409 when compression is already in progress', async () => {
+    const res = await request('POST', `/api/storage/${compressProjectId}/compress`, {}, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 409);
+    assert.ok(res.body.error);
   });
 });
 
-describe('GET /api/compression/:projectId', () => {
-  let projectId;
+// ─── Towers API ───────────────────────────────────────────────────────────────
 
-  before(async () => {
-    const res = await request('POST', '/api/projects/create', {
-      name: 'compression-records-project',
-      stack: 'node',
-    }, { Authorization: `Bearer ${authToken}` });
-    projectId = res.body.project.id;
-    // Trigger a compression job so there is at least one record
-    await request('POST', '/api/compression/compress', {
-      projectId,
-      force: true,
-    }, { Authorization: `Bearer ${authToken}` });
-  });
-
+describe('GET /api/towers', () => {
   test('returns 401 without auth token', async () => {
-    const res = await request('GET', `/api/compression/${projectId}`);
+    const res = await request('GET', '/api/towers');
     assert.equal(res.status, 401);
   });
 
-  test('returns 404 for nonexistent project', async () => {
-    const res = await request('GET', '/api/compression/proj_nonexistent', null, {
-      Authorization: `Bearer ${authToken}`,
-    });
-    assert.equal(res.status, 404);
-  });
-
-  test('returns compression records for a valid project', async () => {
-    const res = await request('GET', `/api/compression/${projectId}`, null, {
-      Authorization: `Bearer ${authToken}`,
-    });
-    assert.equal(res.status, 200);
-    assert.equal(res.body.projectId, projectId);
-    assert.ok(Array.isArray(res.body.records));
-    assert.ok(res.body.records.length >= 1);
-    assert.ok(res.body.records[0].id);
-    assert.ok(res.body.records[0].status);
-  });
-});
-
-// ─── Infrastructure API ───────────────────────────────────────────────────────
-
-describe('GET /api/infrastructure/plans', () => {
-  test('returns list of tower plans without authentication', async () => {
-    const res = await request('GET', '/api/infrastructure/plans');
-    assert.equal(res.status, 200);
-    assert.ok(Array.isArray(res.body.plans));
-    const planIds = res.body.plans.map(p => p.id);
-    assert.ok(planIds.includes('micro'));
-    assert.ok(planIds.includes('standard'));
-    assert.ok(planIds.includes('pro'));
-    assert.ok(planIds.includes('enterprise'));
-    assert.ok(typeof res.body.provisionTimeDays === 'number');
-  });
-});
-
-describe('GET /api/infrastructure/towers', () => {
-  test('returns 401 without auth token', async () => {
-    const res = await request('GET', '/api/infrastructure/towers');
-    assert.equal(res.status, 401);
-  });
-
-  test('returns list of towers for authenticated user', async () => {
-    const res = await request('GET', '/api/infrastructure/towers', null, {
+  test('returns list when no towers are registered', async () => {
+    const res = await request('GET', '/api/towers', null, {
       Authorization: `Bearer ${authToken}`,
     });
     assert.equal(res.status, 200);
@@ -619,92 +562,104 @@ describe('GET /api/infrastructure/towers', () => {
   });
 });
 
-describe('POST /api/infrastructure/towers', () => {
-  test('returns 401 without auth token', async () => {
-    const res = await request('POST', '/api/infrastructure/towers', { plan: 'micro' });
+describe('POST /api/towers/register', () => {
+  test('returns 401 without build secret', async () => {
+    const res = await request('POST', '/api/towers/register', {
+      url: 'http://localhost:5000',
+    });
     assert.equal(res.status, 401);
   });
 
-  test('returns 400 when plan is missing', async () => {
-    const res = await request('POST', '/api/infrastructure/towers', {}, {
-      Authorization: `Bearer ${authToken}`,
+  test('returns 400 when url is missing', async () => {
+    const res = await request('POST', '/api/towers/register', {}, {
+      'x-build-secret': 'dev-build-secret',
     });
     assert.equal(res.status, 400);
     assert.ok(res.body.error);
   });
 
-  test('returns 400 for invalid plan', async () => {
-    const res = await request('POST', '/api/infrastructure/towers', {
-      plan: 'super-ultra-mega',
-    }, { Authorization: `Bearer ${authToken}` });
+  test('returns 400 for an invalid url', async () => {
+    const res = await request('POST', '/api/towers/register', {
+      url: 'not-a-valid-url',
+    }, { 'x-build-secret': 'dev-build-secret' });
     assert.equal(res.status, 400);
     assert.ok(res.body.error);
   });
 
-  test('returns 400 for invalid region', async () => {
-    const res = await request('POST', '/api/infrastructure/towers', {
-      plan: 'micro',
-      region: 'mars-1',
-    }, { Authorization: `Bearer ${authToken}` });
-    assert.equal(res.status, 400);
-    assert.ok(res.body.error);
-  });
-
-  test('provisions a micro tower successfully', async () => {
-    const res = await request('POST', '/api/infrastructure/towers', {
-      plan: 'micro',
-      region: 'us-east-1',
-    }, { Authorization: `Bearer ${authToken}` });
+  test('registers a tower successfully', async () => {
+    const res = await request('POST', '/api/towers/register', {
+      url: 'http://localhost:5001',
+      region: 'us-east',
+    }, { 'x-build-secret': 'dev-build-secret' });
     assert.equal(res.status, 201);
+    assert.ok(res.body.tower);
     assert.ok(res.body.tower.id);
-    assert.equal(res.body.tower.plan, 'micro');
-    assert.equal(res.body.tower.region, 'us-east-1');
-    assert.equal(res.body.tower.status, 'provisioning');
-    assert.ok(res.body.tower.compressionEnabled);
-    assert.ok(res.body.tower.autoScaleEnabled);
-    assert.ok(typeof res.body.estimatedReadyDays === 'number');
-  });
-
-  test('provisions an enterprise tower successfully', async () => {
-    const res = await request('POST', '/api/infrastructure/towers', {
-      plan: 'enterprise',
-    }, { Authorization: `Bearer ${authToken}` });
-    assert.equal(res.status, 201);
-    assert.equal(res.body.tower.plan, 'enterprise');
-    assert.equal(res.body.tower.cpu, 32);
-    assert.equal(res.body.tower.ramGB, 128);
+    assert.equal(res.body.tower.url, 'http://localhost:5001');
+    assert.equal(res.body.tower.region, 'us-east');
   });
 });
 
-describe('GET /api/infrastructure/towers/:id', () => {
+describe('POST /api/towers/:id/heartbeat', () => {
   let towerId;
 
   before(async () => {
-    const res = await request('POST', '/api/infrastructure/towers', {
-      plan: 'standard',
-    }, { Authorization: `Bearer ${authToken}` });
+    const res = await request('POST', '/api/towers/register', {
+      url: 'http://localhost:5002',
+    }, { 'x-build-secret': 'dev-build-secret' });
     towerId = res.body.tower.id;
   });
 
-  test('returns 401 without auth token', async () => {
-    const res = await request('GET', `/api/infrastructure/towers/${towerId}`);
+  test('returns 401 without build secret', async () => {
+    const res = await request('POST', `/api/towers/${towerId}/heartbeat`, {});
     assert.equal(res.status, 401);
   });
 
   test('returns 404 for nonexistent tower', async () => {
-    const res = await request('GET', '/api/infrastructure/towers/tower_nonexistent', null, {
-      Authorization: `Bearer ${authToken}`,
+    const res = await request('POST', '/api/towers/tower_nonexistent/heartbeat', {}, {
+      'x-build-secret': 'dev-build-secret',
     });
     assert.equal(res.status, 404);
   });
 
-  test('returns tower by id', async () => {
-    const res = await request('GET', `/api/infrastructure/towers/${towerId}`, null, {
-      Authorization: `Bearer ${authToken}`,
+  test('records heartbeat with active job count', async () => {
+    const res = await request('POST', `/api/towers/${towerId}/heartbeat`, {
+      activeJobs: 3,
+    }, { 'x-build-secret': 'dev-build-secret' });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.tower);
+    assert.equal(res.body.tower.activeJobs, 3);
+    assert.ok(res.body.tower.lastHeartbeatAt);
+  });
+});
+
+describe('DELETE /api/towers/:id', () => {
+  let towerId;
+
+  before(async () => {
+    const res = await request('POST', '/api/towers/register', {
+      url: 'http://localhost:5003',
+    }, { 'x-build-secret': 'dev-build-secret' });
+    towerId = res.body.tower.id;
+  });
+
+  test('returns 401 without build secret', async () => {
+    const res = await request('DELETE', `/api/towers/${towerId}`);
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 404 for nonexistent tower', async () => {
+    const res = await request('DELETE', '/api/towers/tower_nonexistent', null, {
+      'x-build-secret': 'dev-build-secret',
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test('deregisters a tower successfully', async () => {
+    const res = await request('DELETE', `/api/towers/${towerId}`, null, {
+      'x-build-secret': 'dev-build-secret',
     });
     assert.equal(res.status, 200);
     assert.ok(res.body.tower);
     assert.equal(res.body.tower.id, towerId);
-    assert.equal(res.body.tower.plan, 'standard');
   });
 });

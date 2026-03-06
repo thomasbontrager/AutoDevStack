@@ -24,6 +24,7 @@ const crypto = require('node:crypto');
 const { execSync, spawn } = require('node:child_process');
 const fs = require('node:fs');
 const path = require('node:path');
+const compressor = require('./lib/workspace-compressor');
 
 const PORT = parseInt(process.env.PORT || '5000', 10);
 const BUILD_SECRET = process.env.BUILD_SECRET || 'dev-build-secret';
@@ -139,41 +140,24 @@ async function runBuild(deploymentId, gitUrl, projectName) {
     await runCommand('git', ['clone', '--depth', '1', '--', gitUrl, cloneDir], deploymentId);
     jobLog(deploymentId, 'Clone complete');
 
-    // ── Auto-compression ──────────────────────────────────────────────────────
-    // If the cloned workspace is larger than the threshold, compress it and
-    // report the savings so large projects stay fast and cost-efficient.
-    const workspaceSizeBytes = getDirSizeBytes(cloneDir);
-    if (workspaceSizeBytes >= COMPRESSION_THRESHOLD_BYTES) {
-      jobLog(
-        deploymentId,
-        `Workspace size ${(workspaceSizeBytes / (1024 ** 3)).toFixed(2)} GB exceeds threshold – ` +
-          'running auto-compression before build',
+    // ── Auto-compression ────────────────────────────────────────────────────
+    // If the cloned workspace exceeds the configured threshold (default 5 GB),
+    // intelligently compress it before building to reclaim storage space and
+    // speed up the build context transfer.
+    const compressionStats = await compressor.autoCompress(cloneDir);
+    if (compressionStats.triggered) {
+      jobLog(deploymentId,
+        `Auto-compression applied: ${compressionStats.originalSizeHuman} → ` +
+        `${compressionStats.finalSizeHuman} ` +
+        `(ratio: ${(compressionStats.ratio * 100).toFixed(2)}%, ` +
+        `freed: ${compressor.formatBytes(compressionStats.freedBytes)})`
       );
-      const archivePath = path.join(BUILDS_DIR, `${deploymentId}.tar.gz`);
-      try {
-        await compressWorkspace(cloneDir, archivePath, deploymentId);
-        const archiveSizeBytes = fs.statSync(archivePath).size;
-        // savings ratio: 1.0 = 100% reduction (archive is 0 bytes), 0.0 = no saving
-        const savedRatio = workspaceSizeBytes > 0
-          ? (workspaceSizeBytes - archiveSizeBytes) / workspaceSizeBytes
-          : 0;
-        jobLog(
-          deploymentId,
-          `Auto-compression complete: ` +
-            `${(workspaceSizeBytes / (1024 ** 2)).toFixed(1)} MB → ` +
-            `${(archiveSizeBytes / (1024 ** 2)).toFixed(1)} MB ` +
-            `(saved ${(savedRatio * 100).toFixed(1)}%)`,
-        );
-        job.compressionArchive = archivePath;
-        job.compressionRatio = savedRatio;
-        // Clean up the archive after logging – the build uses the cloneDir
-        try { fs.unlinkSync(archivePath); } catch { /* ignore */ }
-      } catch (compressionErr) {
-        // Compression is best-effort; log and continue with the normal build
-        jobLog(deploymentId, `Auto-compression skipped: ${compressionErr.message}`);
-      }
+    } else {
+      jobLog(deploymentId,
+        `Workspace size: ${compressionStats.originalSizeHuman} (below threshold – ` +
+        `no compression needed)`
+      );
     }
-    // ─────────────────────────────────────────────────────────────────────────
 
     // Determine image name
     const imageName = `autodevstack-${slug}:${deploymentId.slice(-8)}`;
@@ -311,7 +295,11 @@ const server = http.createServer(async (req, res) => {
 
   // Health check
   if (method === 'GET' && url.pathname === '/health') {
-    return send(res, 200, { status: 'ok', activeJobs: Object.keys(jobs).length });
+    return send(res, 200, {
+      status: 'ok',
+      activeJobs: Object.keys(jobs).length,
+      compressionThreshold: compressor.formatBytes(compressor.DEFAULT_THRESHOLD_BYTES),
+    });
   }
 
   // Authenticate all other requests
@@ -382,6 +370,40 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { message: 'Container stopped', deploymentId });
   }
 
+  // POST /compress  – ad-hoc workspace compression
+  if (method === 'POST' && url.pathname === '/compress') {
+    let body;
+    try { body = await readBody(req); }
+    catch (e) { return send(res, 400, { error: e.message }); }
+
+    const { dirPath, thresholdBytes } = body;
+    if (!dirPath) {
+      return send(res, 400, { error: 'dirPath is required' });
+    }
+
+    if (!fs.existsSync(dirPath)) {
+      return send(res, 404, { error: `Directory not found: ${dirPath}` });
+    }
+
+    // Run compression asynchronously and return immediately
+    const jobId = `comp_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    send(res, 202, { message: 'Compression job accepted', jobId, dirPath });
+
+    compressor.autoCompress(dirPath, thresholdBytes || undefined)
+      .then(stats => {
+        process.stdout.write(
+          `[compress:${jobId}] ` +
+          `${stats.originalSizeHuman} → ${stats.finalSizeHuman} ` +
+          `(triggered: ${stats.triggered})\n`
+        );
+      })
+      .catch(err => {
+        process.stderr.write(`[compress:${jobId}] Error: ${err.message}\n`);
+      });
+
+    return;
+  }
+
   send(res, 404, { error: 'Route not found' });
 });
 
@@ -393,6 +415,26 @@ server.listen(PORT, () => {
   console.log(`AutoDevStack Build Server running on http://localhost:${PORT}`);
   console.log(`Builds directory: ${BUILDS_DIR}`);
   console.log(`Subdomain base:   ${SUBDOMAIN_BASE}`);
+  console.log(`Compression threshold: ${compressor.formatBytes(compressor.DEFAULT_THRESHOLD_BYTES)}`);
+
+  // Optional: self-register as a tower with the platform API so the API can
+  // route deployments across multiple build-server instances (towers).
+  const apiUrl = process.env.API_URL;
+  const towerRegion = process.env.TOWER_REGION || 'default';
+  if (apiUrl) {
+    const selfUrl = process.env.TOWER_URL || `http://localhost:${PORT}`;
+    fetch(`${apiUrl}/api/towers/register`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-build-secret': BUILD_SECRET,
+      },
+      body: JSON.stringify({ url: selfUrl, region: towerRegion }),
+    })
+      .then(r => r.json())
+      .then(d => console.log(`Tower registered with platform API: ${d.tower?.id || JSON.stringify(d)}`))
+      .catch(err => console.warn(`Could not register as tower with ${apiUrl}: ${err.message}`));
+  }
 });
 
 module.exports = server;
