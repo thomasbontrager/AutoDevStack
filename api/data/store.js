@@ -7,7 +7,7 @@ function read() {
   try {
     return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
   } catch {
-    return { users: [], projects: [], deployments: [], domains: [] };
+    return { users: [], projects: [], deployments: [], subscriptions: [], invoices: [] };
   }
 }
 
@@ -51,34 +51,37 @@ function createDeployment(deployment) {
   return deployment;
 }
 
-function getDomains() {
-  return read().domains || [];
-}
-
-function getDomainsByOwner(owner) {
-  return getDomains().filter(d => d.owner === owner);
-}
-
-function getDomainByName(domain) {
-  return getDomains().find(d => d.domain === domain) || null;
-}
-
-function createDomain(domain) {
+function getSubscriptionByUsername(username) {
   const db = read();
-  if (!db.domains) db.domains = [];
-  db.domains.push(domain);
-  write(db);
-  return domain;
+  const subs = db.subscriptions || [];
+  return subs.find(s => s.username === username) || null;
 }
 
-function deleteDomain(domain, owner) {
+function upsertSubscription(subscription) {
   const db = read();
-  if (!db.domains) db.domains = [];
-  const index = db.domains.findIndex(d => d.domain === domain && d.owner === owner);
-  if (index === -1) return null;
-  const removed = db.domains.splice(index, 1)[0];
+  if (!db.subscriptions) db.subscriptions = [];
+  const idx = db.subscriptions.findIndex(s => s.username === subscription.username);
+  if (idx >= 0) {
+    db.subscriptions[idx] = subscription;
+  } else {
+    db.subscriptions.push(subscription);
+  }
   write(db);
-  return removed;
+  return subscription;
+}
+
+function getInvoicesByUsername(username) {
+  const db = read();
+  const invoices = db.invoices || [];
+  return invoices.filter(i => i.username === username);
+}
+
+function createInvoice(invoice) {
+  const db = read();
+  if (!db.invoices) db.invoices = [];
+  db.invoices.push(invoice);
+  write(db);
+  return invoice;
 }
 
 module.exports = {
@@ -89,9 +92,8 @@ module.exports = {
   createProject,
   getDeployments,
   createDeployment,
-  getDomains,
-  getDomainsByOwner,
-  getDomainByName,
-  createDomain,
-  deleteDomain,
+  getSubscriptionByUsername,
+  upsertSubscription,
+  getInvoicesByUsername,
+  createInvoice,
 };
