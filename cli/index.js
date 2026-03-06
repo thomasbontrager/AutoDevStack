@@ -41,6 +41,8 @@ function parseArgs() {
     git: false,
     docker: false,
     ai: false,
+    register: false,
+    apiUrl: null,
     help: false,
   };
 
@@ -61,6 +63,11 @@ function parseArgs() {
       flags.docker = true;
     } else if (arg === '--ai') {
       flags.ai = true;
+    } else if (arg === '--register') {
+      flags.register = true;
+    } else if (arg === '--api-url' && args[i + 1]) {
+      flags.apiUrl = args[i + 1];
+      i++;
     } else if (!arg.startsWith('-') && !flags.projectName) {
       flags.projectName = arg;
     }
@@ -82,6 +89,8 @@ function showHelp() {
   console.log(chalk.white("  --git                Initialize Git repository"));
   console.log(chalk.white("  --docker             Add Docker support (Dockerfile + docker-compose.yml)"));
   console.log(chalk.white("  --ai                 AI-powered app generation (coming soon)"));
+  console.log(chalk.white("  --register           Register project with the AutoDevStack platform API"));
+  console.log(chalk.white("  --api-url <url>      Platform API URL (default: http://localhost:4000)"));
   console.log(chalk.white("  --help, -h           Show this help message\n"));
 
   console.log(chalk.yellow.bold("EXAMPLES:"));
@@ -193,6 +202,60 @@ build
 `;
   fs.writeFileSync(path.join(projectDir, '.dockerignore'), dockerignore);
 }
+
+async function registerWithPlatform(projectName, templateKey, description, apiUrl) {
+  const url = apiUrl || 'http://localhost:4000';
+
+  // Prompt for platform credentials
+  const { username, password } = await inquirer.prompt([
+    {
+      type: 'input',
+      name: 'username',
+      message: 'Platform API username:',
+      validate: input => input.trim() ? true : 'Username cannot be empty.',
+    },
+    {
+      type: 'password',
+      name: 'password',
+      message: 'Platform API password:',
+      mask: '*',
+      validate: input => input ? true : 'Password cannot be empty.',
+    },
+  ]);
+
+  // Login
+  let token;
+  try {
+    const loginRes = await fetch(`${url}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password }),
+    });
+    const loginData = await loginRes.json();
+    if (!loginRes.ok) {
+      throw new Error(loginData.error || 'Login failed');
+    }
+    token = loginData.token;
+  } catch (err) {
+    throw new Error(`Failed to authenticate with platform: ${err.message}`);
+  }
+
+  // Register project
+  const registerRes = await fetch(`${url}/api/projects/create`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({ name: projectName, stack: templateKey, description }),
+  });
+  const registerData = await registerRes.json();
+  if (!registerRes.ok) {
+    throw new Error(registerData.error || 'Project registration failed');
+  }
+  return registerData.project;
+}
+
 
 
 (async function main() {
@@ -374,6 +437,22 @@ build
       } catch (err) {
         gitSpinner.fail(chalk.red('Failed to initialize Git.'));
         console.error(chalk.gray(err.message));
+      }
+    }
+
+    // Register with platform API if requested
+    if (flags.register) {
+      try {
+        const project = await registerWithPlatform(
+          projectName,
+          templateKey,
+          '',
+          flags.apiUrl
+        );
+        console.log(chalk.green(`✅ Project registered on platform (ID: ${project.id})`));
+      } catch (err) {
+        console.log(chalk.yellow(`⚠️  Could not register with platform: ${err.message}`));
+        console.log(chalk.gray('   You can register later by starting the API server and running autodevstack register.'));
       }
     }
 

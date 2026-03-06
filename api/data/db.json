@@ -1,0 +1,13 @@
+{
+  "users": [
+    {
+      "id": "1",
+      "username": "admin",
+      "passwordHash": "$2b$10$lwT4qvSoxvRCxCSZcGchquKNpehToB3ZK6KKAuoqLSUqWeKDlqkKK",
+      "role": "admin",
+      "createdAt": "2024-01-01T00:00:00.000Z"
+    }
+  ],
+  "projects": [],
+  "deployments": []
+}
