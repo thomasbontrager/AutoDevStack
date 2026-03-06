@@ -10,6 +10,7 @@ const ChatMessageSchema = z.object({
 
 const ChatRequestSchema = z.object({
   messages: z.array(ChatMessageSchema).min(1),
+  sessionId: z.string().optional(),
 });
 
 // Forward to the AI service
