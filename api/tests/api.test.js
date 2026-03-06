@@ -23,6 +23,8 @@ const TEST_DB = {
   ],
   projects: [],
   deployments: [],
+  billing: [],
+  invoices: [],
 };
 
 let server;
@@ -224,6 +226,64 @@ describe('POST /api/deploy', () => {
     }, { Authorization: `Bearer ${authToken}` });
     assert.equal(res.status, 400);
   });
+
+  test('accepts optional gitUrl field', async () => {
+    const res = await request('POST', '/api/deploy', {
+      projectId,
+      gitUrl: 'https://github.com/user/my-app.git',
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.deployment.gitUrl, 'https://github.com/user/my-app.git');
+  });
+
+  test('returns 400 for invalid gitUrl', async () => {
+    const res = await request('POST', '/api/deploy', {
+      projectId,
+      gitUrl: 'not-a-valid-url',
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+});
+
+describe('GET /api/deploy/:id', () => {
+  let deploymentId;
+
+  before(async () => {
+    // Create a project and deployment for these tests
+    const projRes = await request('POST', '/api/projects/create', {
+      name: 'get-deploy-test',
+      stack: 'node',
+    }, { Authorization: `Bearer ${authToken}` });
+    const pid = projRes.body.project.id;
+
+    const depRes = await request('POST', '/api/deploy', {
+      projectId: pid,
+    }, { Authorization: `Bearer ${authToken}` });
+    deploymentId = depRes.body.deployment.id;
+  });
+
+  test('returns 401 without auth token', async () => {
+    const res = await request('GET', `/api/deploy/${deploymentId}`);
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 404 for nonexistent deployment', async () => {
+    const res = await request('GET', '/api/deploy/deploy_nonexistent', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test('returns deployment by id', async () => {
+    const res = await request('GET', `/api/deploy/${deploymentId}`, null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.deployment);
+    assert.equal(res.body.deployment.id, deploymentId);
+    assert.ok(res.body.deployment.status);
+  });
 });
 
 describe('GET /api/projects', () => {
@@ -244,5 +304,145 @@ describe('GET /api/deploy', () => {
     });
     assert.equal(res.status, 200);
     assert.ok(Array.isArray(res.body.deployments));
+  });
+});
+
+describe('GET /api/billing/plans', () => {
+  test('returns list of plans without authentication', async () => {
+    const res = await request('GET', '/api/billing/plans');
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body.plans));
+    const planIds = res.body.plans.map(p => p.id);
+    assert.ok(planIds.includes('free'));
+    assert.ok(planIds.includes('starter'));
+    assert.ok(planIds.includes('pro'));
+    assert.ok(planIds.includes('team'));
+    assert.ok(planIds.includes('enterprise'));
+  });
+});
+
+describe('GET /api/billing', () => {
+  test('returns 401 without auth token', async () => {
+    const res = await request('GET', '/api/billing');
+    assert.equal(res.status, 401);
+  });
+
+  test('returns billing info for authenticated user (defaults to free)', async () => {
+    const res = await request('GET', '/api/billing', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.billing);
+    assert.equal(res.body.billing.plan, 'free');
+    assert.ok(res.body.billing.planDetails);
+    assert.equal(res.body.billing.planDetails.id, 'free');
+  });
+});
+
+describe('POST /api/billing/subscribe', () => {
+  test('returns 401 without auth token', async () => {
+    const res = await request('POST', '/api/billing/subscribe', { planId: 'starter' });
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 400 for invalid plan', async () => {
+    const res = await request('POST', '/api/billing/subscribe', { planId: 'nonexistent' }, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
+  test('subscribes to starter plan successfully', async () => {
+    const res = await request('POST', '/api/billing/subscribe', { planId: 'starter' }, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.billing.plan, 'starter');
+    assert.ok(res.body.billing.planDetails);
+  });
+
+  test('billing info reflects updated plan', async () => {
+    const res = await request('GET', '/api/billing', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.equal(res.body.billing.plan, 'starter');
+  });
+});
+
+describe('GET /api/billing/invoices', () => {
+  test('returns 401 without auth token', async () => {
+    const res = await request('GET', '/api/billing/invoices');
+    assert.equal(res.status, 401);
+  });
+
+  test('returns invoices for authenticated user', async () => {
+    const res = await request('GET', '/api/billing/invoices', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(Array.isArray(res.body.invoices));
+    // One invoice was recorded when subscribing to starter above
+    assert.ok(res.body.invoices.length >= 1);
+    assert.equal(res.body.invoices[0].plan, 'starter');
+    assert.equal(res.body.invoices[0].status, 'paid');
+  });
+});
+
+describe('POST /api/billing/checkout', () => {
+  test('returns 401 without auth token', async () => {
+    const res = await request('POST', '/api/billing/checkout', { planId: 'pro' });
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 400 for invalid plan', async () => {
+    const res = await request('POST', '/api/billing/checkout', { planId: 'invalid' }, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test('returns 400 for free plan checkout', async () => {
+    const res = await request('POST', '/api/billing/checkout', { planId: 'free' }, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 400);
+  });
+
+  test('returns mock checkout URL when Stripe is not configured', async () => {
+    const res = await request('POST', '/api/billing/checkout', { planId: 'pro' }, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.checkoutUrl);
+    assert.ok(res.body.mock);
+  });
+});
+
+describe('POST /api/billing/cancel', () => {
+  test('returns 401 without auth token', async () => {
+    const res = await request('POST', '/api/billing/cancel', {});
+    assert.equal(res.status, 401);
+  });
+
+  test('cancels subscription successfully', async () => {
+    const res = await request('POST', '/api/billing/cancel', {}, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.billing.cancelAtPeriodEnd);
+  });
+
+  test('returns 400 when already on free plan', async () => {
+    // Downgrade to free first
+    await request('POST', '/api/billing/subscribe', { planId: 'free' }, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    const res = await request('POST', '/api/billing/cancel', {}, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
   });
 });

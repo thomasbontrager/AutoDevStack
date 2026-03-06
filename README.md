@@ -5,12 +5,19 @@
 Stop copy-pasting boilerplate. AutoDevStack is a zero-config CLI that spins up battle-tested project templates so you can focus on building features from minute one.
 
 [![npm version](https://img.shields.io/npm/v/autodevstack)](https://www.npmjs.com/package/autodevstack)
+[![npx autodevstack](https://img.shields.io/badge/npx-autodevstack-brightgreen)](https://www.npmjs.com/package/autodevstack)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 
 ---
 
 ## Demo
+
+**One-command SaaS generation:**
+```bash
+npx autodevstack my-saas --template saas --git --docker
+```
+That's it — a full SaaS project with auth, billing, database, Docker, and Git is ready in seconds. See [`examples/saas-demo/`](examples/saas-demo/) for an example.
 
 **Interactive mode:**
 ```
@@ -62,9 +69,25 @@ npx autodevstack --help
 - 💼 **SaaS template** — production-ready SaaS with auth, billing, and database
 - 📦 **Monorepo support** — Turborepo-powered monorepo scaffolding
 - 🐳 **Docker ready** — add containerization with `--docker` flag
+- 🤖 **AI mode** — use `--ai` to scaffold an AI-powered app (Next.js + Express + LangChain + OpenAI/Anthropic)
 - 🔌 **Plugin-ready** — extend with community or custom plugins (see [`plugins/`](plugins/))
 - 📦 **Auto name injection** — project name is set in `package.json` automatically
 - 🔒 **`.gitignore` handling** — template `_gitignore` files are renamed on copy
+
+---
+
+## Why AutoDevStack?
+
+| Feature | AutoDevStack | Create React App | Next.js CLI | T3 CLI |
+|---------|:------------:|:----------------:|:-----------:|:------:|
+| Multiple templates | ✅ | ❌ | ❌ | ❌ |
+| SaaS starter (auth + billing + DB) | ✅ | ❌ | ❌ | ❌ |
+| Docker support (`--docker`) | ✅ | ❌ | ❌ | ❌ |
+| Git initialization (`--git`) | ✅ | ❌ | ❌ | ✅ |
+| Monorepo scaffold | ✅ | ❌ | ❌ | ❌ |
+| AI app template | ✅ | ❌ | ❌ | ❌ |
+| Plugin system | ✅ | ❌ | ❌ | ❌ |
+| Non-interactive (full CLI flags) | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
@@ -122,6 +145,7 @@ Templates live in the [`templates/`](templates/) directory. Each template is a s
 | T3 Stack | [`templates/t3/`](templates/t3/) | Next.js + Tailwind CSS + tRPC + Prisma |
 | **SaaS Starter** | [`templates/saas/`](templates/saas/) | **Production SaaS with auth, billing, and database** |
 | **Monorepo** | [`templates/monorepo/`](templates/monorepo/) | **Turborepo monorepo with apps, services, and packages** |
+| **AI App** | [`templates/ai/`](templates/ai/) | **Next.js + Express + LangChain + Prisma + OpenAI/Anthropic** |
 
 ### Adding a Template
 
