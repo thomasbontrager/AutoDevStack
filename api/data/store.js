@@ -7,7 +7,7 @@ function read() {
   try {
     return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
   } catch {
-    return { users: [], projects: [], deployments: [] };
+    return { users: [], projects: [], deployments: [], subscriptions: [], invoices: [] };
   }
 }
 
