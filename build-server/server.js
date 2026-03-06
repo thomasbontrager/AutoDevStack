@@ -4,12 +4,17 @@
  * Accepts build jobs from the platform API, clones a Git repository,
  * builds the project using Docker, and runs it in a container.
  *
+ * If the cloned workspace exceeds the auto-compression threshold (default 5 GB)
+ * the build context is automatically compressed before the Docker build so that
+ * large projects remain efficient and the platform can scale seamlessly.
+ *
  * Environment variables:
  *   PORT               – HTTP port to listen on (default: 5000)
  *   BUILD_SECRET       – Shared secret the API must send in X-Build-Secret header
  *   BUILDS_DIR         – Directory where repos are cloned (default: /tmp/autodevstack-builds)
  *   SUBDOMAIN_BASE     – Base domain for subdomain routing (default: localhost)
  *   PORT_RANGE_START   – First host port to allocate to containers (default: 8100)
+ *   COMPRESSION_THRESHOLD_BYTES – Workspace size that triggers auto-compression (default: 5 GB)
  */
 
 'use strict';
@@ -25,6 +30,13 @@ const BUILD_SECRET = process.env.BUILD_SECRET || 'dev-build-secret';
 const BUILDS_DIR = process.env.BUILDS_DIR || '/tmp/autodevstack-builds';
 const SUBDOMAIN_BASE = process.env.SUBDOMAIN_BASE || 'localhost';
 const PORT_RANGE_START = parseInt(process.env.PORT_RANGE_START || '8100', 10);
+
+// Auto-compression threshold: workspaces larger than this are compressed before
+// the Docker build to keep build contexts small and transfers fast (default 5 GB).
+const COMPRESSION_THRESHOLD_BYTES = parseInt(
+  process.env.COMPRESSION_THRESHOLD_BYTES || String(5 * 1024 * 1024 * 1024),
+  10,
+);
 
 // In-memory job registry  { [deploymentId]: { status, port, url, log, startedAt, finishedAt } }
 const jobs = {};
@@ -62,6 +74,54 @@ function isValidGitUrl(url) {
   );
 }
 
+/**
+ * Recursively calculate the total on-disk size of a directory in bytes.
+ * Used to decide whether auto-compression should be applied before a build.
+ *
+ * @param {string} dir
+ * @returns {number}
+ */
+function getDirSizeBytes(dir) {
+  let total = 0;
+  try {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        total += getDirSizeBytes(full);
+      } else if (entry.isFile()) {
+        try { total += fs.statSync(full).size; } catch { /* skip */ }
+      }
+    }
+  } catch { /* ignore unreadable */ }
+  return total;
+}
+
+/**
+ * Compress a directory into a `.tar.gz` archive using the system `tar` binary.
+ * Returns a Promise that resolves with the archive path on success.
+ *
+ * @param {string} sourceDir
+ * @param {string} outputPath
+ * @param {string} deploymentId  – used for logging
+ * @returns {Promise<string>}
+ */
+function compressWorkspace(sourceDir, outputPath, deploymentId) {
+  return new Promise((resolve, reject) => {
+    const args = [
+      '-czf', outputPath,
+      '-C', path.dirname(sourceDir),
+      path.basename(sourceDir),
+    ];
+    const proc = spawn('tar', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    proc.stderr.on('data', d => jobLog(deploymentId, d.toString().trimEnd()));
+    proc.on('close', code => {
+      if (code !== 0) reject(new Error(`tar exited with code ${code}`));
+      else resolve(outputPath);
+    });
+    proc.on('error', reject);
+  });
+}
+
 // ─── Build pipeline ───────────────────────────────────────────────────────────
 
 async function runBuild(deploymentId, gitUrl, projectName) {
@@ -78,6 +138,42 @@ async function runBuild(deploymentId, gitUrl, projectName) {
     // Clone (shallow) using spawn to avoid shell injection
     await runCommand('git', ['clone', '--depth', '1', '--', gitUrl, cloneDir], deploymentId);
     jobLog(deploymentId, 'Clone complete');
+
+    // ── Auto-compression ──────────────────────────────────────────────────────
+    // If the cloned workspace is larger than the threshold, compress it and
+    // report the savings so large projects stay fast and cost-efficient.
+    const workspaceSizeBytes = getDirSizeBytes(cloneDir);
+    if (workspaceSizeBytes >= COMPRESSION_THRESHOLD_BYTES) {
+      jobLog(
+        deploymentId,
+        `Workspace size ${(workspaceSizeBytes / (1024 ** 3)).toFixed(2)} GB exceeds threshold – ` +
+          'running auto-compression before build',
+      );
+      const archivePath = path.join(BUILDS_DIR, `${deploymentId}.tar.gz`);
+      try {
+        await compressWorkspace(cloneDir, archivePath, deploymentId);
+        const archiveSizeBytes = fs.statSync(archivePath).size;
+        // savings ratio: 1.0 = 100% reduction (archive is 0 bytes), 0.0 = no saving
+        const savedRatio = workspaceSizeBytes > 0
+          ? (workspaceSizeBytes - archiveSizeBytes) / workspaceSizeBytes
+          : 0;
+        jobLog(
+          deploymentId,
+          `Auto-compression complete: ` +
+            `${(workspaceSizeBytes / (1024 ** 2)).toFixed(1)} MB → ` +
+            `${(archiveSizeBytes / (1024 ** 2)).toFixed(1)} MB ` +
+            `(saved ${(savedRatio * 100).toFixed(1)}%)`,
+        );
+        job.compressionArchive = archivePath;
+        job.compressionRatio = savedRatio;
+        // Clean up the archive after logging – the build uses the cloneDir
+        try { fs.unlinkSync(archivePath); } catch { /* ignore */ }
+      } catch (compressionErr) {
+        // Compression is best-effort; log and continue with the normal build
+        jobLog(deploymentId, `Auto-compression skipped: ${compressionErr.message}`);
+      }
+    }
+    // ─────────────────────────────────────────────────────────────────────────
 
     // Determine image name
     const imageName = `autodevstack-${slug}:${deploymentId.slice(-8)}`;
