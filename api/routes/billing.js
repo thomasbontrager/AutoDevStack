@@ -1,21 +1,20 @@
 const express = require('express');
 const rateLimit = require('express-rate-limit');
-const {
-  getSubscriptionByUsername,
-  upsertSubscription,
-  getInvoicesByUsername,
-  createInvoice,
-  getProjects,
-  getDeployments,
-} = require('../data/store');
 const { authenticateToken } = require('../middleware/auth');
+const {
+  getBilling,
+  updateBilling,
+  getInvoices,
+  addInvoice,
+} = require('../data/store');
 
 const router = express.Router();
 
 const billingLimiter = rateLimit({ windowMs: 60_000, max: 60 });
 
-// ── Plan definitions ──────────────────────────────────────────────────────────
-
+// ---------------------------------------------------------------------------
+// Plan definitions
+// ---------------------------------------------------------------------------
 const PLANS = {
   free: {
     id: 'free',
@@ -23,370 +22,341 @@ const PLANS = {
     price: 0,
     currency: 'usd',
     interval: null,
+    stripePriceId: null,
     features: {
-      maxProjects: 3,
-      maxDeploymentsPerMonth: 5,
+      deployments: 3,
+      projects: 3,
       privateProjects: false,
       teamMembers: 1,
       analytics: false,
-      prioritySupport: false,
+      customDomains: false,
+      support: 'community',
     },
-    description: 'Perfect for personal side-projects and experimentation.',
-    stripePriceId: null,
+    description: 'Perfect for side projects and experimentation.',
   },
   starter: {
     id: 'starter',
     name: 'Starter',
-    price: 9,
+    price: 900,
     currency: 'usd',
     interval: 'month',
+    stripePriceId: process.env.STRIPE_PRICE_STARTER || null,
     features: {
-      maxProjects: 10,
-      maxDeploymentsPerMonth: 50,
+      deployments: 20,
+      projects: 10,
       privateProjects: true,
       teamMembers: 1,
       analytics: false,
-      prioritySupport: false,
+      customDomains: true,
+      support: 'email',
     },
-    description: 'For freelancers and individual developers.',
-    stripePriceId: process.env.STRIPE_PRICE_STARTER || 'price_starter_monthly',
+    description: 'For freelancers and solo developers.',
   },
   pro: {
     id: 'pro',
     name: 'Pro',
-    price: 29,
+    price: 2900,
     currency: 'usd',
     interval: 'month',
+    stripePriceId: process.env.STRIPE_PRICE_PRO || null,
     features: {
-      maxProjects: -1,
-      maxDeploymentsPerMonth: 200,
+      deployments: 100,
+      projects: 50,
       privateProjects: true,
       teamMembers: 1,
       analytics: true,
-      prioritySupport: false,
+      customDomains: true,
+      support: 'priority',
     },
-    description: 'Unlimited projects and advanced analytics for power users.',
-    stripePriceId: process.env.STRIPE_PRICE_PRO || 'price_pro_monthly',
+    description: 'Full power for professional developers.',
   },
   team: {
     id: 'team',
     name: 'Team',
-    price: 79,
+    price: 7900,
     currency: 'usd',
     interval: 'month',
+    stripePriceId: process.env.STRIPE_PRICE_TEAM || null,
     features: {
-      maxProjects: -1,
-      maxDeploymentsPerMonth: -1,
+      deployments: -1,
+      projects: -1,
       privateProjects: true,
-      teamMembers: 5,
+      teamMembers: 10,
       analytics: true,
-      prioritySupport: true,
+      customDomains: true,
+      support: 'priority',
     },
-    description: 'Collaborate with up to 5 teammates with full analytics.',
-    stripePriceId: process.env.STRIPE_PRICE_TEAM || 'price_team_monthly',
+    description: 'Collaborate without limits.',
   },
   enterprise: {
     id: 'enterprise',
     name: 'Enterprise',
     price: null,
     currency: 'usd',
-    interval: 'month',
+    interval: null,
+    stripePriceId: null,
     features: {
-      maxProjects: -1,
-      maxDeploymentsPerMonth: -1,
+      deployments: -1,
+      projects: -1,
       privateProjects: true,
       teamMembers: -1,
       analytics: true,
-      prioritySupport: true,
+      customDomains: true,
+      support: 'dedicated',
     },
-    description: 'Custom contracts, SSO, and dedicated support for large teams.',
-    stripePriceId: null,
+    description: 'Custom pricing and SLAs for large teams.',
   },
 };
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-function getOrCreateSubscription(username) {
-  let sub = getSubscriptionByUsername(username);
-  if (!sub) {
-    sub = {
-      id: `sub_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      username,
-      planId: 'free',
-      status: 'active',
-      stripeCustomerId: null,
-      stripeSubscriptionId: null,
-      currentPeriodStart: new Date().toISOString(),
-      currentPeriodEnd: null,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    upsertSubscription(sub);
-  }
-  return sub;
+// ---------------------------------------------------------------------------
+// Stripe (optional — falls back to mock when key is not configured)
+// ---------------------------------------------------------------------------
+function getStripe() {
+  const key = process.env.STRIPE_SECRET_KEY;
+  if (!key) return null;
+  // Lazy-require so tests that don't set the env var still pass.
+  // eslint-disable-next-line global-require
+  const Stripe = require('stripe');
+  return new Stripe(key, { apiVersion: '2024-12-18.acacia' });
 }
 
-function getCurrentMonthDeploymentCount(username) {
-  const now = new Date();
-  const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-  const projects = getProjects().filter(p => p.owner === username);
-  const projectIds = new Set(projects.map(p => p.id));
-  return getDeployments().filter(
-    d => projectIds.has(d.projectId) && d.createdAt >= startOfMonth
-  ).length;
-}
-
-// ── Routes ────────────────────────────────────────────────────────────────────
-
-// GET /api/billing/plans
-router.get('/plans', billingLimiter, (_req, res) => {
+// ---------------------------------------------------------------------------
+// GET /api/billing/plans  (public)
+// ---------------------------------------------------------------------------
+router.get('/plans', (req, res) => {
   res.json({ plans: Object.values(PLANS) });
 });
 
-// GET /api/billing/subscription  (authenticated)
-router.get('/subscription', billingLimiter, authenticateToken, (req, res) => {
-  const sub = getOrCreateSubscription(req.user.username);
-  const plan = PLANS[sub.planId] || PLANS.free;
-  res.json({ subscription: sub, plan });
+// ---------------------------------------------------------------------------
+// GET /api/billing  (authenticated)
+// Returns the current user's subscription details.
+// ---------------------------------------------------------------------------
+router.get('/', billingLimiter, authenticateToken, (req, res) => {
+  const billing = getBilling(req.user.id) || defaultBilling(req.user.id);
+  const plan = PLANS[billing.plan] || PLANS.free;
+  res.json({ billing: { ...billing, planDetails: plan } });
 });
 
-// GET /api/billing/usage  (authenticated)
-router.get('/usage', billingLimiter, authenticateToken, (req, res) => {
-  const username = req.user.username;
-  const sub = getOrCreateSubscription(username);
-  const plan = PLANS[sub.planId] || PLANS.free;
-
-  const projectCount = getProjects().filter(p => p.owner === username).length;
-  const deploymentsThisMonth = getCurrentMonthDeploymentCount(username);
-
-  res.json({
-    usage: {
-      projects: {
-        used: projectCount,
-        limit: plan.features.maxProjects,
-      },
-      deploymentsThisMonth: {
-        used: deploymentsThisMonth,
-        limit: plan.features.maxDeploymentsPerMonth,
-      },
-    },
-    plan: {
-      id: plan.id,
-      name: plan.name,
-    },
-  });
-});
-
-// GET /api/billing/invoices  (authenticated)
-router.get('/invoices', billingLimiter, authenticateToken, (req, res) => {
-  const invoices = getInvoicesByUsername(req.user.username);
-  res.json({ invoices });
-});
-
-// POST /api/billing/subscribe  (authenticated)
-// Simulates a plan change without a real Stripe call (useful when no Stripe keys are set).
-router.post('/subscribe', billingLimiter, authenticateToken, (req, res) => {
-  const { planId } = req.body;
-
-  if (!planId) {
-    return res.status(400).json({ error: 'planId is required' });
-  }
-
-  const plan = PLANS[planId];
-  if (!plan) {
-    return res.status(400).json({
-      error: `Invalid planId "${planId}". Valid plans: ${Object.keys(PLANS).join(', ')}`,
-    });
-  }
-
-  if (planId === 'enterprise') {
-    return res.status(400).json({
-      error: 'Enterprise plans require contacting sales. Please use /api/billing/create-checkout-session for paid plans.',
-    });
-  }
-
-  const now = new Date().toISOString();
-  const sub = getOrCreateSubscription(req.user.username);
-
-  const previousPlanId = sub.planId;
-
-  sub.planId = planId;
-  sub.status = 'active';
-  sub.updatedAt = now;
-
-  // For paid plans, simulate a period
-  if (plan.price && plan.price > 0) {
-    sub.currentPeriodStart = now;
-    const periodEnd = new Date();
-    periodEnd.setMonth(periodEnd.getMonth() + 1);
-    sub.currentPeriodEnd = periodEnd.toISOString();
-
-    // Generate a mock invoice for the subscription
-    const invoice = {
-      id: `inv_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-      username: req.user.username,
-      planId,
-      planName: plan.name,
-      amount: plan.price,
-      currency: plan.currency,
-      status: 'paid',
-      description: `Subscription to ${plan.name} plan`,
-      periodStart: sub.currentPeriodStart,
-      periodEnd: sub.currentPeriodEnd,
-      createdAt: now,
-    };
-    createInvoice(invoice);
-  }
-
-  upsertSubscription(sub);
-
-  res.json({
-    message: `Successfully ${previousPlanId === planId ? 'renewed' : 'switched to'} the ${plan.name} plan.`,
-    subscription: sub,
-    plan,
-  });
-});
-
-// POST /api/billing/create-checkout-session  (authenticated)
-// Creates a Stripe Checkout Session URL for paid plans.
-// Requires STRIPE_SECRET_KEY environment variable.
-router.post('/create-checkout-session', billingLimiter, authenticateToken, async (req, res) => {
+// ---------------------------------------------------------------------------
+// POST /api/billing/checkout  (authenticated)
+// Creates a Stripe Checkout session (or returns mock URL when Stripe is not
+// configured).
+// ---------------------------------------------------------------------------
+router.post('/checkout', billingLimiter, authenticateToken, async (req, res) => {
   const { planId, successUrl, cancelUrl } = req.body;
 
-  if (!planId) {
-    return res.status(400).json({ error: 'planId is required' });
+  if (!planId || !PLANS[planId]) {
+    return res.status(400).json({ error: `Invalid plan "${planId}". Valid plans: ${Object.keys(PLANS).join(', ')}` });
   }
 
   const plan = PLANS[planId];
-  if (!plan) {
-    return res.status(400).json({
-      error: `Invalid planId "${planId}". Valid plans: ${Object.keys(PLANS).join(', ')}`,
+
+  if (plan.price === null) {
+    // Enterprise — redirect to contact sales
+    return res.json({
+      checkoutUrl: successUrl || 'https://autodevstack.dev/contact',
+      mock: true,
     });
   }
 
-  if (!plan.price || plan.price === 0) {
-    return res.status(400).json({ error: 'Checkout sessions are only available for paid plans.' });
+  if (plan.price === 0) {
+    return res.status(400).json({ error: 'Cannot create a checkout session for the Free plan.' });
   }
 
-  if (planId === 'enterprise') {
-    return res.status(400).json({ error: 'Enterprise plans require contacting sales.' });
-  }
+  const stripe = getStripe();
 
-  if (!process.env.STRIPE_SECRET_KEY) {
-    // Return a helpful error when Stripe is not configured
-    return res.status(503).json({
-      error: 'Stripe is not configured. Set STRIPE_SECRET_KEY to enable payment processing.',
-      hint: 'Use POST /api/billing/subscribe to switch plans without payment in development.',
+  if (!stripe) {
+    // Mock mode: simulate a successful checkout
+    const mockSessionId = `cs_mock_${Date.now()}`;
+    return res.json({
+      sessionId: mockSessionId,
+      checkoutUrl: successUrl
+        ? `${successUrl}?session_id=${mockSessionId}&mock=true`
+        : `http://localhost:3000/billing?session_id=${mockSessionId}&mock=true`,
+      mock: true,
     });
   }
 
   try {
-    // Dynamically require stripe so the server starts fine without the package installed.
-    // eslint-disable-next-line import/no-extraneous-dependencies
-    const Stripe = require('stripe');
-    const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
-
     const session = await stripe.checkout.sessions.create({
       mode: 'subscription',
+      payment_method_types: ['card'],
       line_items: [{ price: plan.stripePriceId, quantity: 1 }],
-      success_url: successUrl || `${process.env.APP_URL || 'http://localhost:3000'}/billing?success=true`,
-      cancel_url: cancelUrl || `${process.env.APP_URL || 'http://localhost:3000'}/billing?canceled=true`,
-      metadata: { username: req.user.username, planId },
+      success_url: successUrl || `${req.headers.origin || 'http://localhost:3000'}/billing?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: cancelUrl || `${req.headers.origin || 'http://localhost:3000'}/billing`,
+      metadata: { userId: req.user.id, planId },
     });
-
-    res.json({ url: session.url, sessionId: session.id });
+    res.json({ sessionId: session.id, checkoutUrl: session.url });
   } catch (err) {
-    console.error('Stripe error:', err.message);
-    res.status(500).json({ error: `Failed to create checkout session: ${err.message}` });
+    res.status(502).json({ error: 'Failed to create checkout session', detail: err.message });
   }
 });
 
-// POST /api/billing/webhook
-// Stripe webhook to handle subscription lifecycle events.
-router.post('/webhook', express.raw({ type: 'application/json' }), (req, res) => {
+// ---------------------------------------------------------------------------
+// POST /api/billing/subscribe  (authenticated)
+// Directly subscribes the user to a plan (used for mock / downgrade to free).
+// ---------------------------------------------------------------------------
+router.post('/subscribe', billingLimiter, authenticateToken, (req, res) => {
+  const { planId } = req.body;
+
+  if (!planId || !PLANS[planId]) {
+    return res.status(400).json({ error: `Invalid plan "${planId}". Valid plans: ${Object.keys(PLANS).join(', ')}` });
+  }
+
+  const plan = PLANS[planId];
+  const now = new Date().toISOString();
+  const billing = getBilling(req.user.id) || defaultBilling(req.user.id);
+
+  const updated = {
+    ...billing,
+    plan: planId,
+    status: 'active',
+    currentPeriodStart: now,
+    currentPeriodEnd: plan.interval === 'month'
+      ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+      : null,
+    cancelAtPeriodEnd: false,
+    updatedAt: now,
+  };
+
+  updateBilling(req.user.id, updated);
+
+  // Record an invoice for paid plans
+  if (plan.price && plan.price > 0) {
+    addInvoice({
+      id: `inv_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
+      userId: req.user.id,
+      plan: planId,
+      amount: plan.price,
+      currency: plan.currency,
+      status: 'paid',
+      description: `${plan.name} plan — ${new Date(now).toLocaleString('en-US', { month: 'long', year: 'numeric' })}`,
+      createdAt: now,
+    });
+  }
+
+  res.json({ message: `Subscribed to ${plan.name} plan`, billing: { ...updated, planDetails: plan } });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/billing/cancel  (authenticated)
+// Schedules the subscription to be cancelled at the end of the period.
+// ---------------------------------------------------------------------------
+router.post('/cancel', billingLimiter, authenticateToken, (req, res) => {
+  const billing = getBilling(req.user.id) || defaultBilling(req.user.id);
+
+  if (billing.plan === 'free') {
+    return res.status(400).json({ error: 'You are already on the Free plan.' });
+  }
+
+  const stripe = getStripe();
+  const now = new Date().toISOString();
+
+  if (stripe && billing.stripeSubscriptionId) {
+    // Async — don't await for now; handle via webhook in production
+    stripe.subscriptions.update(billing.stripeSubscriptionId, { cancel_at_period_end: true })
+      .catch(err => console.error('Stripe cancel error:', err.message));
+  }
+
+  const updated = { ...billing, cancelAtPeriodEnd: true, updatedAt: now };
+  updateBilling(req.user.id, updated);
+
+  res.json({ message: 'Subscription will be cancelled at the end of the billing period.', billing: updated });
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/billing/invoices  (authenticated)
+// ---------------------------------------------------------------------------
+router.get('/invoices', billingLimiter, authenticateToken, (req, res) => {
+  const invoices = getInvoices(req.user.id);
+  res.json({ invoices });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/billing/webhook  (public — Stripe sends raw body)
+// Note: raw body parsing is applied at the app level in server.js BEFORE
+// express.json() so req.body will be a Buffer for this route.
+// ---------------------------------------------------------------------------
+router.post('/webhook', (req, res) => {
   const sig = req.headers['stripe-signature'];
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+  const stripe = getStripe();
 
-  if (!webhookSecret) {
-    return res.status(503).json({ error: 'Stripe webhook secret not configured.' });
+  if (!stripe || !webhookSecret) {
+    // Mock: just acknowledge
+    return res.json({ received: true });
   }
 
   let event;
   try {
-    const Stripe = require('stripe');
-    const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
     event = stripe.webhooks.constructEvent(req.body, sig, webhookSecret);
   } catch (err) {
-    console.error('Webhook signature verification failed:', err.message);
-    return res.status(400).json({ error: `Webhook error: ${err.message}` });
+    return res.status(400).json({ error: `Webhook signature verification failed: ${err.message}` });
   }
-
-  const now = new Date().toISOString();
 
   switch (event.type) {
     case 'checkout.session.completed': {
       const session = event.data.object;
-      const { username, planId } = session.metadata || {};
-      if (username && planId) {
-        const plan = PLANS[planId];
-        const sub = getOrCreateSubscription(username);
-        sub.planId = planId;
-        sub.status = 'active';
-        sub.stripeCustomerId = session.customer;
-        sub.stripeSubscriptionId = session.subscription;
-        sub.updatedAt = now;
-        upsertSubscription(sub);
-
-        if (plan) {
-          const periodEnd = new Date();
-          periodEnd.setMonth(periodEnd.getMonth() + 1);
-          const invoice = {
-            id: `inv_${session.id}`,
-            username,
-            planId,
-            planName: plan.name,
-            amount: plan.price,
-            currency: plan.currency,
-            status: 'paid',
-            description: `Subscription to ${plan.name} plan`,
-            periodStart: now,
-            periodEnd: periodEnd.toISOString(),
-            createdAt: now,
-          };
-          createInvoice(invoice);
-        }
+      const { userId, planId } = session.metadata || {};
+      if (userId && planId && PLANS[planId]) {
+        const now = new Date().toISOString();
+        const existing = getBilling(userId) || defaultBilling(userId);
+        updateBilling(userId, {
+          ...existing,
+          plan: planId,
+          status: 'active',
+          stripeCustomerId: session.customer,
+          stripeSubscriptionId: session.subscription,
+          currentPeriodStart: now,
+          currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+          cancelAtPeriodEnd: false,
+          updatedAt: now,
+        });
       }
       break;
     }
-
     case 'customer.subscription.deleted': {
-      const stripeSub = event.data.object;
-      // Downgrade to free plan on cancellation
-      const db = require('../data/store');
-      const allSubs = [];
-      // We can't easily query by stripeSubscriptionId without an index,
-      // so we iterate. In production, use a real DB with indexing.
-      const { getUsers } = db;
-      getUsers().forEach(u => {
-        const sub = getSubscriptionByUsername(u.username);
-        if (sub && sub.stripeSubscriptionId === stripeSub.id) {
-          sub.planId = 'free';
-          sub.status = 'canceled';
-          sub.stripeSubscriptionId = null;
-          sub.updatedAt = now;
-          upsertSubscription(sub);
-        }
-      });
+      const sub = event.data.object;
+      // Find user by stripeCustomerId
+      const allBilling = require('../data/store').getAllBilling();
+      const entry = allBilling.find(b => b.stripeCustomerId === sub.customer);
+      if (entry) {
+        updateBilling(entry.userId, {
+          ...entry,
+          plan: 'free',
+          status: 'active',
+          stripeSubscriptionId: null,
+          cancelAtPeriodEnd: false,
+          updatedAt: new Date().toISOString(),
+        });
+      }
       break;
     }
-
     default:
-      // Unhandled event type — acknowledge receipt
       break;
   }
 
   res.json({ received: true });
 });
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+function defaultBilling(userId) {
+  return {
+    userId,
+    plan: 'free',
+    status: 'active',
+    stripeCustomerId: null,
+    stripeSubscriptionId: null,
+    currentPeriodStart: new Date().toISOString(),
+    currentPeriodEnd: null,
+    cancelAtPeriodEnd: false,
+    usage: { deployments: 0, projects: 0 },
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
+}
 
 module.exports = router;
 module.exports.PLANS = PLANS;

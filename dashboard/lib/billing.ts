@@ -1,55 +1,52 @@
-// Billing data helpers – all mock/localStorage based (mirrors the API plan definitions)
-
-export type PlanId = "free" | "starter" | "pro" | "team" | "enterprise";
+// Billing types and mock data helpers for the AutoDevStack dashboard.
+// In production, these would be backed by API calls to /api/billing/*.
 
 export interface PlanFeatures {
-  maxProjects: number; // -1 = unlimited
-  maxDeploymentsPerMonth: number; // -1 = unlimited
+  deployments: number; // -1 = unlimited
+  projects: number;    // -1 = unlimited
   privateProjects: boolean;
   teamMembers: number; // -1 = unlimited
   analytics: boolean;
-  prioritySupport: boolean;
+  customDomains: boolean;
+  support: "community" | "email" | "priority" | "dedicated";
 }
 
 export interface Plan {
-  id: PlanId;
+  id: string;
   name: string;
-  price: number | null;
+  price: number | null; // null = contact sales (Enterprise)
   currency: string;
   interval: "month" | null;
   features: PlanFeatures;
   description: string;
 }
 
-export interface Subscription {
-  id: string;
-  planId: PlanId;
-  status: "active" | "canceled" | "past_due";
+export interface BillingInfo {
+  plan: string;
+  status: "active" | "past_due" | "cancelled";
   currentPeriodStart: string | null;
   currentPeriodEnd: string | null;
-  createdAt: string;
+  cancelAtPeriodEnd: boolean;
+  usage: {
+    deployments: number;
+    projects: number;
+  };
+  planDetails: Plan;
 }
 
 export interface Invoice {
   id: string;
-  planId: PlanId;
-  planName: string;
+  plan: string;
   amount: number;
   currency: string;
   status: "paid" | "open" | "void";
   description: string;
-  periodStart: string;
-  periodEnd: string;
   createdAt: string;
 }
 
-export interface UsageStats {
-  projects: { used: number; limit: number };
-  deploymentsThisMonth: { used: number; limit: number };
-}
-
-// ── Plan registry ─────────────────────────────────────────────────────────────
-
+// ---------------------------------------------------------------------------
+// Static plan definitions (mirrors api/routes/billing.js PLANS)
+// ---------------------------------------------------------------------------
 export const PLANS: Plan[] = [
   {
     id: "free",
@@ -57,62 +54,66 @@ export const PLANS: Plan[] = [
     price: 0,
     currency: "usd",
     interval: null,
-    description: "Perfect for personal side-projects and experimentation.",
+    description: "Perfect for side projects and experimentation.",
     features: {
-      maxProjects: 3,
-      maxDeploymentsPerMonth: 5,
+      deployments: 3,
+      projects: 3,
       privateProjects: false,
       teamMembers: 1,
       analytics: false,
-      prioritySupport: false,
+      customDomains: false,
+      support: "community",
     },
   },
   {
     id: "starter",
     name: "Starter",
-    price: 9,
+    price: 900,
     currency: "usd",
     interval: "month",
-    description: "For freelancers and individual developers.",
+    description: "For freelancers and solo developers.",
     features: {
-      maxProjects: 10,
-      maxDeploymentsPerMonth: 50,
+      deployments: 20,
+      projects: 10,
       privateProjects: true,
       teamMembers: 1,
       analytics: false,
-      prioritySupport: false,
+      customDomains: true,
+      support: "email",
     },
   },
   {
     id: "pro",
     name: "Pro",
-    price: 29,
+    price: 2900,
     currency: "usd",
     interval: "month",
-    description: "Unlimited projects and advanced analytics for power users.",
+    description: "Full power for professional developers.",
     features: {
-      maxProjects: -1,
-      maxDeploymentsPerMonth: 200,
+      deployments: 100,
+      projects: 50,
       privateProjects: true,
       teamMembers: 1,
       analytics: true,
-      prioritySupport: false,
+      customDomains: true,
+      support: "priority",
     },
   },
   {
     id: "team",
     name: "Team",
-    price: 79,
+    price: 7900,
     currency: "usd",
     interval: "month",
-    description: "Collaborate with up to 5 teammates with full analytics.",
+    description: "Collaborate without limits.",
     features: {
-      maxProjects: -1,
-      maxDeploymentsPerMonth: -1,
+      deployments: -1,
+      projects: -1,
       privateProjects: true,
-      teamMembers: 5,
+      teamMembers: 10,
       analytics: true,
-      prioritySupport: true,
+      customDomains: true,
+      support: "priority",
     },
   },
   {
@@ -120,116 +121,168 @@ export const PLANS: Plan[] = [
     name: "Enterprise",
     price: null,
     currency: "usd",
-    interval: "month",
-    description: "Custom contracts, SSO, and dedicated support for large teams.",
+    interval: null,
+    description: "Custom pricing and SLAs for large teams.",
     features: {
-      maxProjects: -1,
-      maxDeploymentsPerMonth: -1,
+      deployments: -1,
+      projects: -1,
       privateProjects: true,
       teamMembers: -1,
       analytics: true,
-      prioritySupport: true,
+      customDomains: true,
+      support: "dedicated",
     },
   },
 ];
 
-// ── localStorage keys ─────────────────────────────────────────────────────────
-
-const SUB_KEY = "autodevstack_subscription";
+// ---------------------------------------------------------------------------
+// localStorage-backed billing state (mock / demo mode)
+// ---------------------------------------------------------------------------
+const BILLING_KEY = "autodevstack_billing";
 const INVOICES_KEY = "autodevstack_invoices";
 
-// ── Subscription helpers ──────────────────────────────────────────────────────
+const MOCK_INVOICES: Invoice[] = [
+  {
+    id: "inv_demo_001",
+    plan: "pro",
+    amount: 2900,
+    currency: "usd",
+    status: "paid",
+    description: "Pro plan — January 2025",
+    createdAt: "2025-01-01T00:00:00.000Z",
+  },
+  {
+    id: "inv_demo_002",
+    plan: "pro",
+    amount: 2900,
+    currency: "usd",
+    status: "paid",
+    description: "Pro plan — February 2025",
+    createdAt: "2025-02-01T00:00:00.000Z",
+  },
+  {
+    id: "inv_demo_003",
+    plan: "pro",
+    amount: 2900,
+    currency: "usd",
+    status: "paid",
+    description: "Pro plan — March 2025",
+    createdAt: "2025-03-01T00:00:00.000Z",
+  },
+];
 
-export function getSubscription(): Subscription {
-  if (typeof window === "undefined") return defaultSubscription();
-  const stored = localStorage.getItem(SUB_KEY);
-  if (!stored) {
-    const sub = defaultSubscription();
-    localStorage.setItem(SUB_KEY, JSON.stringify(sub));
-    return sub;
-  }
-  return JSON.parse(stored) as Subscription;
-}
-
-function defaultSubscription(): Subscription {
+function getDefaultBilling(): BillingInfo {
+  const freePlan = PLANS.find((p) => p.id === "free")!;
   return {
-    id: "sub_default",
-    planId: "free",
+    plan: "free",
     status: "active",
     currentPeriodStart: null,
     currentPeriodEnd: null,
-    createdAt: new Date().toISOString(),
+    cancelAtPeriodEnd: false,
+    usage: { deployments: 1, projects: 3 },
+    planDetails: freePlan,
   };
 }
 
-export function setSubscription(planId: PlanId): Subscription {
-  const plan = PLANS.find((p) => p.id === planId)!;
-  const now = new Date();
-  const periodEnd = new Date(now);
-  periodEnd.setMonth(periodEnd.getMonth() + 1);
+export function getBilling(): BillingInfo {
+  if (typeof window === "undefined") return getDefaultBilling();
+  const stored = localStorage.getItem(BILLING_KEY);
+  if (!stored) return getDefaultBilling();
+  try {
+    const parsed = JSON.parse(stored) as BillingInfo;
+    // Re-attach planDetails in case of stale data
+    parsed.planDetails = PLANS.find((p) => p.id === parsed.plan) ?? PLANS[0];
+    return parsed;
+  } catch {
+    return getDefaultBilling();
+  }
+}
 
-  const sub: Subscription = {
-    id: `sub_${Date.now()}`,
-    planId,
+export function saveBilling(billing: BillingInfo): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(BILLING_KEY, JSON.stringify(billing));
+}
+
+export function subscribeToPlan(planId: string): BillingInfo {
+  const plan = PLANS.find((p) => p.id === planId);
+  if (!plan) throw new Error(`Unknown plan: ${planId}`);
+  const now = new Date().toISOString();
+  const billing: BillingInfo = {
+    plan: planId,
     status: "active",
-    currentPeriodStart: plan.price ? now.toISOString() : null,
-    currentPeriodEnd: plan.price ? periodEnd.toISOString() : null,
-    createdAt: getSubscription().createdAt,
+    currentPeriodStart: now,
+    currentPeriodEnd:
+      plan.interval === "month"
+        ? new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString()
+        : null,
+    cancelAtPeriodEnd: false,
+    usage: getBilling().usage,
+    planDetails: plan,
   };
+  saveBilling(billing);
 
-  if (typeof window !== "undefined") {
-    localStorage.setItem(SUB_KEY, JSON.stringify(sub));
-
-    // Generate a mock invoice for paid plans
-    if (plan.price && plan.price > 0) {
-      const invoice: Invoice = {
-        id: `inv_${Date.now()}`,
-        planId,
-        planName: plan.name,
-        amount: plan.price,
-        currency: plan.currency,
-        status: "paid",
-        description: `Subscription to ${plan.name} plan`,
-        periodStart: now.toISOString(),
-        periodEnd: periodEnd.toISOString(),
-        createdAt: now.toISOString(),
-      };
-      const invoices = getInvoices();
-      localStorage.setItem(INVOICES_KEY, JSON.stringify([invoice, ...invoices]));
-    }
+  // Record an invoice for paid plans
+  if (plan.price && plan.price > 0) {
+    const invoices = getInvoices();
+    const invoice: Invoice = {
+      id: `inv_${Date.now()}`,
+      plan: planId,
+      amount: plan.price,
+      currency: plan.currency,
+      status: "paid",
+      description: `${plan.name} plan — ${new Date(now).toLocaleString("en-US", {
+        month: "long",
+        year: "numeric",
+      })}`,
+      createdAt: now,
+    };
+    saveInvoices([invoice, ...invoices]);
   }
 
-  return sub;
+  return billing;
 }
 
-// ── Invoice helpers ───────────────────────────────────────────────────────────
+export function cancelSubscription(): BillingInfo {
+  const billing = getBilling();
+  const updated = { ...billing, cancelAtPeriodEnd: true };
+  saveBilling(updated);
+  return updated;
+}
 
 export function getInvoices(): Invoice[] {
-  if (typeof window === "undefined") return [];
+  if (typeof window === "undefined") return MOCK_INVOICES;
   const stored = localStorage.getItem(INVOICES_KEY);
-  if (!stored) return [];
-  return JSON.parse(stored) as Invoice[];
+  if (!stored) {
+    // Pre-populate with demo invoices on first load
+    saveInvoices(MOCK_INVOICES);
+    return MOCK_INVOICES;
+  }
+  try {
+    return JSON.parse(stored) as Invoice[];
+  } catch {
+    return MOCK_INVOICES;
+  }
 }
 
-// ── Usage helpers ─────────────────────────────────────────────────────────────
-
-export function getUsageStats(projectCount: number, deploymentCount: number): UsageStats {
-  const sub = getSubscription();
-  const plan = PLANS.find((p) => p.id === sub.planId) ?? PLANS[0];
-  return {
-    projects: { used: projectCount, limit: plan.features.maxProjects },
-    deploymentsThisMonth: { used: deploymentCount, limit: plan.features.maxDeploymentsPerMonth },
-  };
+export function saveInvoices(invoices: Invoice[]): void {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(INVOICES_KEY, JSON.stringify(invoices));
 }
 
-// ── Formatting helpers ────────────────────────────────────────────────────────
-
-export function formatPrice(plan: Plan): string {
-  if (plan.price === null) return "Custom";
-  if (plan.price === 0) return "Free";
-  return `$${plan.price}/mo`;
+// ---------------------------------------------------------------------------
+// Formatting helpers
+// ---------------------------------------------------------------------------
+export function formatCents(cents: number, currency = "usd"): string {
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: currency.toUpperCase(),
+    minimumFractionDigits: 0,
+  }).format(cents / 100);
 }
 
-export function formatLimit(value: number): string {
-  return value === -1 ? "Unlimited" : value.toString();
+export function formatFeatureValue(value: number | boolean): string {
+  if (value === -1) return "Unlimited";
+  if (value === true) return "✓";
+  if (value === false) return "✗";
+  return String(value);
 }

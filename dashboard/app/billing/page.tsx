@@ -1,128 +1,83 @@
 "use client";
 
-import { Suspense, useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import Navbar from "@/components/Navbar";
 import { getUser } from "@/lib/auth";
-import { getProjects } from "@/lib/projects";
 import {
   PLANS,
-  getSubscription,
-  setSubscription,
+  getBilling,
   getInvoices,
-  getUsageStats,
-  formatPrice,
-  formatLimit,
-  type Plan,
-  type Subscription,
+  subscribeToPlan,
+  cancelSubscription,
+  formatCents,
+  type BillingInfo,
   type Invoice,
-  type UsageStats,
+  type Plan,
 } from "@/lib/billing";
 
-// ── Small helpers ─────────────────────────────────────────────────────────────
-
-function UsageBar({ used, limit }: { used: number; limit: number }) {
-  const pct = limit === -1 ? 0 : Math.min(100, Math.round((used / limit) * 100));
-  const color =
-    limit === -1
-      ? "bg-green-500"
-      : pct >= 90
-      ? "bg-red-500"
-      : pct >= 70
-      ? "bg-yellow-500"
-      : "bg-indigo-500";
-
-  return (
-    <div className="w-full bg-gray-100 rounded-full h-2 mt-1">
-      {limit === -1 ? (
-        <div className="bg-green-500 h-2 rounded-full w-full opacity-30" />
-      ) : (
-        <div
-          className={`${color} h-2 rounded-full transition-all`}
-          style={{ width: `${pct}%` }}
-        />
-      )}
-    </div>
-  );
-}
-
-function FeatureCheck({ ok }: { ok: boolean }) {
-  return ok ? (
-    <span className="text-green-500 font-bold">✓</span>
-  ) : (
-    <span className="text-gray-300 font-bold">✗</span>
-  );
-}
-
-// ── Main page ─────────────────────────────────────────────────────────────────
-
 export default function BillingPage() {
-  return (
-    <Suspense fallback={<div className="p-10 text-gray-400">Loading billing…</div>}>
-      <BillingContent />
-    </Suspense>
-  );
-}
-
-function BillingContent() {
   const router = useRouter();
-  const searchParams = useSearchParams();
-
-  const [subscription, setSubscriptionState] = useState<Subscription | null>(null);
+  const [billing, setBilling] = useState<BillingInfo | null>(null);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
-  const [usage, setUsage] = useState<UsageStats | null>(null);
   const [upgrading, setUpgrading] = useState<string | null>(null);
-  const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [cancelling, setCancelling] = useState(false);
+  const [toast, setToast] = useState<{ message: string; type: "success" | "error" } | null>(null);
 
   useEffect(() => {
-    if (!getUser()) {
+    const user = getUser();
+    if (!user) {
       router.push("/login");
       return;
     }
-
-    const sub = getSubscription();
-    setSubscriptionState(sub);
+    setBilling(getBilling());
     setInvoices(getInvoices());
+  }, [router]);
 
-    const projects = getProjects();
-    // For demonstration, deployments this month is kept at 0 since localStorage
-    // doesn't track deployments in the dashboard mock.
-    setUsage(getUsageStats(projects.length, 0));
-
-    // Handle Stripe redirect query params
-    if (searchParams.get("success") === "true") {
-      showToast("success", "Payment successful! Your plan has been updated.");
-    } else if (searchParams.get("canceled") === "true") {
-      showToast("error", "Payment was canceled. Your plan was not changed.");
-    }
-  }, [router, searchParams]);
-
-  function showToast(type: "success" | "error", message: string) {
-    setToast({ type, message });
+  function showToast(message: string, type: "success" | "error" = "success") {
+    setToast({ message, type });
     setTimeout(() => setToast(null), 4000);
   }
 
-  function handleUpgrade(planId: string) {
-    if (planId === "enterprise") {
-      window.location.href = "mailto:sales@autodevstack.io?subject=Enterprise%20Plan%20Inquiry";
-      return;
-    }
-
+  function handleSubscribe(planId: string) {
+    if (billing?.plan === planId) return;
     setUpgrading(planId);
     try {
-      const updated = setSubscription(planId as Subscription["planId"]);
-      setSubscriptionState(updated);
+      const updated = subscribeToPlan(planId);
+      setBilling(updated);
       setInvoices(getInvoices());
-      const plan = PLANS.find((p) => p.id === planId)!;
-      showToast("success", `Switched to the ${plan.name} plan successfully.`);
+      showToast(`Successfully switched to the ${updated.planDetails.name} plan!`);
     } catch {
-      showToast("error", "Failed to switch plan. Please try again.");
+      showToast("Failed to change plan. Please try again.", "error");
     } finally {
       setUpgrading(null);
     }
   }
 
-  const currentPlan = PLANS.find((p) => p.id === subscription?.planId) ?? PLANS[0];
+  function handleCancel() {
+    setCancelling(true);
+    try {
+      const updated = cancelSubscription();
+      setBilling(updated);
+      showToast("Subscription will be cancelled at the end of the billing period.");
+    } catch {
+      showToast("Failed to cancel subscription. Please try again.", "error");
+    } finally {
+      setCancelling(false);
+    }
+  }
+
+  if (!billing) return null;
+
+  const currentPlan = billing.planDetails;
+  const usageDeploymentPct =
+    currentPlan.features.deployments > 0
+      ? Math.min(100, (billing.usage.deployments / currentPlan.features.deployments) * 100)
+      : 0;
+  const usageProjectPct =
+    currentPlan.features.projects > 0
+      ? Math.min(100, (billing.usage.projects / currentPlan.features.projects) * 100)
+      : 0;
 
   return (
     <>
@@ -141,168 +96,128 @@ function BillingContent() {
 
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">Billing &amp; Plans</h1>
-          <p className="text-gray-500 mt-1">
-            Manage your subscription, usage, and invoices.
-          </p>
+          <p className="text-gray-500 mt-1">Manage your subscription, usage, and invoices.</p>
         </div>
 
-        {/* Current plan + usage */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-10">
-          {/* Current plan card */}
-          <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">Current Plan</h2>
-            <div className="flex items-center gap-3 mb-3">
-              <span className="text-3xl font-bold text-indigo-700">{currentPlan.name}</span>
-              <span
-                className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
-                  subscription?.status === "active"
-                    ? "bg-green-100 text-green-700"
-                    : "bg-red-100 text-red-700"
-                }`}
-              >
-                {subscription?.status ?? "active"}
-              </span>
+        {/* Current plan summary */}
+        <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <p className="text-sm text-gray-500 mb-1">Current plan</p>
+              <div className="flex items-center gap-3">
+                <span className="text-2xl font-bold text-gray-900">{currentPlan.name}</span>
+                <StatusBadge status={billing.status} cancelAtPeriodEnd={billing.cancelAtPeriodEnd} />
+              </div>
+              <p className="text-gray-500 text-sm mt-1">{currentPlan.description}</p>
+              {billing.currentPeriodEnd && (
+                <p className="text-gray-400 text-xs mt-1">
+                  {billing.cancelAtPeriodEnd ? "Cancels on" : "Renews on"}{" "}
+                  {new Date(billing.currentPeriodEnd).toLocaleDateString("en-US", {
+                    month: "long",
+                    day: "numeric",
+                    year: "numeric",
+                  })}
+                </p>
+              )}
             </div>
-            <p className="text-gray-500 text-sm mb-4">{currentPlan.description}</p>
-
-            {subscription?.currentPeriodEnd && (
-              <p className="text-xs text-gray-400">
-                Renews on{" "}
-                {new Date(subscription.currentPeriodEnd).toLocaleDateString("en-US", {
-                  year: "numeric",
-                  month: "long",
-                  day: "numeric",
-                })}
-              </p>
-            )}
-
-            <div className="mt-4 border-t border-gray-100 pt-4 text-sm space-y-1 text-gray-600">
-              <div className="flex justify-between">
-                <span>Private projects</span>
-                <FeatureCheck ok={currentPlan.features.privateProjects} />
-              </div>
-              <div className="flex justify-between">
-                <span>Team members</span>
-                <span className="font-medium">
-                  {formatLimit(currentPlan.features.teamMembers)}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span>Analytics</span>
-                <FeatureCheck ok={currentPlan.features.analytics} />
-              </div>
-              <div className="flex justify-between">
-                <span>Priority support</span>
-                <FeatureCheck ok={currentPlan.features.prioritySupport} />
-              </div>
+            <div className="text-right">
+              {currentPlan.price !== null && currentPlan.price > 0 ? (
+                <p className="text-3xl font-bold text-gray-900">
+                  {formatCents(currentPlan.price)}
+                  <span className="text-base font-normal text-gray-500">/mo</span>
+                </p>
+              ) : currentPlan.price === 0 ? (
+                <p className="text-3xl font-bold text-gray-900">Free</p>
+              ) : (
+                <p className="text-lg font-semibold text-gray-900">Custom pricing</p>
+              )}
+              {billing.plan !== "free" && !billing.cancelAtPeriodEnd && (
+                <button
+                  onClick={handleCancel}
+                  disabled={cancelling}
+                  className="mt-2 text-xs text-red-500 hover:text-red-700 underline disabled:opacity-50"
+                >
+                  {cancelling ? "Cancelling…" : "Cancel subscription"}
+                </button>
+              )}
             </div>
-          </section>
+          </div>
+        </section>
 
-          {/* Usage card */}
-          <section className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">Usage This Month</h2>
-            {usage ? (
-              <div className="space-y-5">
-                <div>
-                  <div className="flex justify-between text-sm text-gray-700">
-                    <span>Projects</span>
-                    <span className="font-medium">
-                      {usage.projects.used} /{" "}
-                      {formatLimit(usage.projects.limit)}
-                    </span>
-                  </div>
-                  <UsageBar used={usage.projects.used} limit={usage.projects.limit} />
-                </div>
-                <div>
-                  <div className="flex justify-between text-sm text-gray-700">
-                    <span>Deployments</span>
-                    <span className="font-medium">
-                      {usage.deploymentsThisMonth.used} /{" "}
-                      {formatLimit(usage.deploymentsThisMonth.limit)}
-                    </span>
-                  </div>
-                  <UsageBar
-                    used={usage.deploymentsThisMonth.used}
-                    limit={usage.deploymentsThisMonth.limit}
-                  />
-                </div>
-                <div className="pt-2 border-t border-gray-100">
-                  <div className="flex justify-between text-sm text-gray-700">
-                    <span>Team members</span>
-                    <span className="font-medium">
-                      1 / {formatLimit(currentPlan.features.teamMembers)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <p className="text-gray-400 text-sm">Loading usage…</p>
-            )}
-          </section>
-        </div>
+        {/* Usage stats */}
+        <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 mb-8">
+          <h2 className="text-lg font-semibold text-gray-800 mb-5">Usage this period</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+            <UsageBar
+              label="Deployments"
+              used={billing.usage.deployments}
+              limit={currentPlan.features.deployments}
+              pct={usageDeploymentPct}
+              color="indigo"
+            />
+            <UsageBar
+              label="Projects"
+              used={billing.usage.projects}
+              limit={currentPlan.features.projects}
+              pct={usageProjectPct}
+              color="purple"
+            />
+          </div>
+          <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <FeatureChip
+              label="Private projects"
+              active={currentPlan.features.privateProjects}
+            />
+            <FeatureChip
+              label="Analytics"
+              active={currentPlan.features.analytics}
+            />
+            <FeatureChip
+              label="Custom domains"
+              active={currentPlan.features.customDomains}
+            />
+            <FeatureChip
+              label={`Team members: ${currentPlan.features.teamMembers === -1 ? "∞" : currentPlan.features.teamMembers}`}
+              active={currentPlan.features.teamMembers > 1 || currentPlan.features.teamMembers === -1}
+            />
+          </div>
+        </section>
 
-        {/* Plan comparison */}
-        <section className="mb-10">
-          <h2 className="text-xl font-semibold text-gray-800 mb-6">Available Plans</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+        {/* Plan cards */}
+        <section className="mb-8">
+          <h2 className="text-lg font-semibold text-gray-800 mb-5">Available plans</h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-4">
             {PLANS.map((plan) => (
               <PlanCard
                 key={plan.id}
                 plan={plan}
-                isCurrent={plan.id === currentPlan.id}
+                isCurrent={billing.plan === plan.id}
                 isUpgrading={upgrading === plan.id}
-                onSelect={() => handleUpgrade(plan.id)}
+                onSelect={handleSubscribe}
               />
             ))}
           </div>
         </section>
 
         {/* Invoices */}
-        <section>
-          <h2 className="text-xl font-semibold text-gray-800 mb-4">Invoices</h2>
+        <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6">
+          <h2 className="text-lg font-semibold text-gray-800 mb-5">Invoices</h2>
           {invoices.length === 0 ? (
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8 text-center">
-              <p className="text-gray-400 text-sm">No invoices yet. Upgrade to a paid plan to see billing history.</p>
-            </div>
+            <p className="text-gray-400 text-sm">No invoices yet.</p>
           ) : (
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm overflow-hidden">
-              <table className="min-w-full divide-y divide-gray-100">
-                <thead className="bg-gray-50">
-                  <tr>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Date</th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Description</th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Amount</th>
-                    <th className="px-6 py-3 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-100">
+                    <th className="text-left py-2 px-3 font-medium text-gray-500">Description</th>
+                    <th className="text-left py-2 px-3 font-medium text-gray-500">Date</th>
+                    <th className="text-right py-2 px-3 font-medium text-gray-500">Amount</th>
+                    <th className="text-right py-2 px-3 font-medium text-gray-500">Status</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-100">
+                <tbody>
                   {invoices.map((inv) => (
-                    <tr key={inv.id} className="hover:bg-gray-50 transition-colors">
-                      <td className="px-6 py-4 text-sm text-gray-600">
-                        {new Date(inv.createdAt).toLocaleDateString("en-US", {
-                          year: "numeric",
-                          month: "short",
-                          day: "numeric",
-                        })}
-                      </td>
-                      <td className="px-6 py-4 text-sm text-gray-800">{inv.description}</td>
-                      <td className="px-6 py-4 text-sm font-medium text-gray-900">
-                        ${inv.amount.toFixed(2)}
-                      </td>
-                      <td className="px-6 py-4">
-                        <span
-                          className={`text-xs font-semibold px-2.5 py-1 rounded-full ${
-                            inv.status === "paid"
-                              ? "bg-green-100 text-green-700"
-                              : inv.status === "open"
-                              ? "bg-yellow-100 text-yellow-700"
-                              : "bg-gray-100 text-gray-600"
-                          }`}
-                        >
-                          {inv.status}
-                        </span>
-                      </td>
-                    </tr>
+                    <InvoiceRow key={inv.id} invoice={inv} />
                   ))}
                 </tbody>
               </table>
@@ -314,7 +229,91 @@ function BillingContent() {
   );
 }
 
-// ── Plan card component ───────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+function StatusBadge({
+  status,
+  cancelAtPeriodEnd,
+}: {
+  status: BillingInfo["status"];
+  cancelAtPeriodEnd: boolean;
+}) {
+  if (cancelAtPeriodEnd) {
+    return (
+      <span className="text-xs font-medium px-2 py-0.5 rounded-full bg-orange-100 text-orange-700">
+        Cancels soon
+      </span>
+    );
+  }
+  const map: Record<BillingInfo["status"], string> = {
+    active: "bg-green-100 text-green-700",
+    past_due: "bg-red-100 text-red-700",
+    cancelled: "bg-gray-100 text-gray-600",
+  };
+  const label: Record<BillingInfo["status"], string> = {
+    active: "Active",
+    past_due: "Past due",
+    cancelled: "Cancelled",
+  };
+  return (
+    <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${map[status]}`}>
+      {label[status]}
+    </span>
+  );
+}
+
+function UsageBar({
+  label,
+  used,
+  limit,
+  pct,
+  color,
+}: {
+  label: string;
+  used: number;
+  limit: number;
+  pct: number;
+  color: "indigo" | "purple";
+}) {
+  const unlimited = limit === -1;
+  const barColor = color === "indigo" ? "bg-indigo-500" : "bg-purple-500";
+  return (
+    <div>
+      <div className="flex justify-between text-sm text-gray-600 mb-1">
+        <span>{label}</span>
+        <span>
+          {used} / {unlimited ? "∞" : limit}
+        </span>
+      </div>
+      <div className="h-2 rounded-full bg-gray-100">
+        {!unlimited && (
+          <div
+            className={`h-2 rounded-full ${barColor} transition-all`}
+            style={{ width: `${pct}%` }}
+          />
+        )}
+        {unlimited && <div className={`h-2 rounded-full ${barColor} w-full opacity-30`} />}
+      </div>
+    </div>
+  );
+}
+
+function FeatureChip({ label, active }: { label: string; active: boolean }) {
+  return (
+    <div
+      className={`flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-full border ${
+        active
+          ? "border-green-200 bg-green-50 text-green-700"
+          : "border-gray-200 bg-gray-50 text-gray-400"
+      }`}
+    >
+      <span>{active ? "✓" : "✗"}</span>
+      <span>{label}</span>
+    </div>
+  );
+}
 
 function PlanCard({
   plan,
@@ -325,83 +324,102 @@ function PlanCard({
   plan: Plan;
   isCurrent: boolean;
   isUpgrading: boolean;
-  onSelect: () => void;
+  onSelect: (planId: string) => void;
 }) {
-  const isHighlighted = plan.id === "pro";
+  const isEnterprise = plan.price === null;
+  const isFree = plan.price === 0;
+
+  const buttonLabel = () => {
+    if (isUpgrading) return "Switching…";
+    if (isCurrent) return "Current plan";
+    if (isEnterprise) return "Contact sales";
+    return isFree ? "Downgrade" : "Upgrade";
+  };
 
   return (
     <div
-      className={`relative flex flex-col rounded-2xl border p-5 transition-shadow ${
+      className={`rounded-2xl border p-5 flex flex-col gap-4 transition-shadow hover:shadow-md ${
         isCurrent
-          ? "border-indigo-400 bg-indigo-50 shadow-md"
-          : isHighlighted
-          ? "border-indigo-200 bg-white shadow-md"
-          : "border-gray-100 bg-white shadow-sm hover:shadow-md"
+          ? "border-indigo-400 ring-2 ring-indigo-200 bg-indigo-50"
+          : "border-gray-100 bg-white"
       }`}
     >
-      {isHighlighted && !isCurrent && (
-        <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-indigo-600 text-white text-xs font-semibold px-3 py-0.5 rounded-full">
-          Popular
-        </span>
-      )}
-      {isCurrent && (
-        <span className="absolute -top-3 left-1/2 -translate-x-1/2 bg-green-600 text-white text-xs font-semibold px-3 py-0.5 rounded-full">
-          Current
-        </span>
-      )}
-
-      <div className="mb-3">
-        <h3 className="text-base font-bold text-gray-900">{plan.name}</h3>
-        <p className="text-2xl font-extrabold text-indigo-700 mt-1">{formatPrice(plan)}</p>
-        <p className="text-xs text-gray-500 mt-1 leading-snug">{plan.description}</p>
+      <div>
+        <p className="font-bold text-gray-900 text-lg">{plan.name}</p>
+        <p className="text-gray-500 text-xs mt-0.5">{plan.description}</p>
       </div>
-
-      <ul className="text-xs text-gray-600 space-y-1.5 flex-1 mb-4">
+      <div>
+        {plan.price === null ? (
+          <p className="text-xl font-bold text-gray-800">Custom</p>
+        ) : plan.price === 0 ? (
+          <p className="text-xl font-bold text-gray-800">Free</p>
+        ) : (
+          <p className="text-xl font-bold text-gray-800">
+            {formatCents(plan.price)}
+            <span className="text-sm font-normal text-gray-500">/mo</span>
+          </p>
+        )}
+      </div>
+      <ul className="space-y-1 text-xs text-gray-600 flex-1">
         <li>
-          <span className="font-medium">{formatLimit(plan.features.maxProjects)}</span> projects
+          {plan.features.deployments === -1 ? "Unlimited" : plan.features.deployments} deployments
         </li>
         <li>
-          <span className="font-medium">
-            {formatLimit(plan.features.maxDeploymentsPerMonth)}
-          </span>{" "}
-          deploys/mo
+          {plan.features.projects === -1 ? "Unlimited" : plan.features.projects} projects
         </li>
-        <li className="flex items-center gap-1">
-          <FeatureCheck ok={plan.features.privateProjects} /> Private projects
+        <li className={plan.features.privateProjects ? "text-gray-700" : "text-gray-400"}>
+          {plan.features.privateProjects ? "✓" : "✗"} Private projects
+        </li>
+        <li className={plan.features.analytics ? "text-gray-700" : "text-gray-400"}>
+          {plan.features.analytics ? "✓" : "✗"} Analytics
         </li>
         <li>
-          <span className="font-medium">{formatLimit(plan.features.teamMembers)}</span> team member
-          {plan.features.teamMembers !== 1 ? "s" : ""}
+          {plan.features.teamMembers === -1 ? "Unlimited" : plan.features.teamMembers} team{" "}
+          {plan.features.teamMembers === 1 ? "member" : "members"}
         </li>
-        <li className="flex items-center gap-1">
-          <FeatureCheck ok={plan.features.analytics} /> Analytics
-        </li>
-        <li className="flex items-center gap-1">
-          <FeatureCheck ok={plan.features.prioritySupport} /> Priority support
-        </li>
+        <li className="capitalize text-gray-500">{plan.features.support} support</li>
       </ul>
-
       <button
-        onClick={onSelect}
+        onClick={() => onSelect(plan.id)}
         disabled={isCurrent || isUpgrading}
-        className={`w-full text-sm font-semibold py-2 rounded-lg transition-colors ${
+        className={`w-full py-2 px-4 rounded-lg text-sm font-semibold transition-colors ${
           isCurrent
-            ? "bg-indigo-100 text-indigo-400 cursor-default"
-            : plan.id === "enterprise"
-            ? "bg-gray-800 hover:bg-gray-900 text-white"
-            : "bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-50"
+            ? "bg-indigo-100 text-indigo-600 cursor-default"
+            : isEnterprise
+            ? "bg-gray-900 hover:bg-gray-700 text-white"
+            : "bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-60"
         }`}
       >
-        {isCurrent
-          ? "Current plan"
-          : isUpgrading
-          ? "Switching…"
-          : plan.id === "enterprise"
-          ? "Contact sales"
-          : plan.price === 0
-          ? "Downgrade"
-          : "Upgrade"}
+        {buttonLabel()}
       </button>
     </div>
+  );
+}
+
+function InvoiceRow({ invoice }: { invoice: Invoice }) {
+  const statusStyles: Record<Invoice["status"], string> = {
+    paid: "bg-green-100 text-green-700",
+    open: "bg-yellow-100 text-yellow-700",
+    void: "bg-gray-100 text-gray-500",
+  };
+  return (
+    <tr className="border-b border-gray-50 hover:bg-gray-50">
+      <td className="py-3 px-3 text-gray-700">{invoice.description}</td>
+      <td className="py-3 px-3 text-gray-500">
+        {new Date(invoice.createdAt).toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        })}
+      </td>
+      <td className="py-3 px-3 text-right font-medium text-gray-800">
+        {formatCents(invoice.amount, invoice.currency)}
+      </td>
+      <td className="py-3 px-3 text-right">
+        <span className={`text-xs font-medium px-2 py-0.5 rounded-full ${statusStyles[invoice.status]}`}>
+          {invoice.status.charAt(0).toUpperCase() + invoice.status.slice(1)}
+        </span>
+      </td>
+    </tr>
   );
 }

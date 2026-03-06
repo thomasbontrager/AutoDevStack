@@ -7,7 +7,7 @@ function read() {
   try {
     return JSON.parse(fs.readFileSync(DB_PATH, 'utf8'));
   } catch {
-    return { users: [], projects: [], deployments: [], subscriptions: [], invoices: [] };
+    return { users: [], projects: [], deployments: [], billing: [], invoices: [] };
   }
 }
 
@@ -51,15 +51,44 @@ function createDeployment(deployment) {
   return deployment;
 }
 
-function updateDeployment(id, fields) {
+function getBilling(userId) {
   const db = read();
-  const idx = db.deployments.findIndex(d => d.id === id);
-  if (idx !== -1) {
-    db.deployments[idx] = { ...db.deployments[idx], ...fields };
-    write(db);
-    return db.deployments[idx];
+  const billing = db.billing || [];
+  return billing.find(b => b.userId === userId) || null;
+}
+
+function getAllBilling() {
+  const db = read();
+  return db.billing || [];
+}
+
+function updateBilling(userId, billingData) {
+  const db = read();
+  if (!db.billing) db.billing = [];
+  const idx = db.billing.findIndex(b => b.userId === userId);
+  if (idx >= 0) {
+    db.billing[idx] = billingData;
+  } else {
+    db.billing.push(billingData);
   }
-  return null;
+  write(db);
+  return billingData;
+}
+
+function getInvoices(userId) {
+  const db = read();
+  const invoices = db.invoices || [];
+  return invoices
+    .filter(inv => inv.userId === userId)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+function addInvoice(invoice) {
+  const db = read();
+  if (!db.invoices) db.invoices = [];
+  db.invoices.push(invoice);
+  write(db);
+  return invoice;
 }
 
 module.exports = {
@@ -70,5 +99,9 @@ module.exports = {
   createProject,
   getDeployments,
   createDeployment,
-  updateDeployment,
+  getBilling,
+  getAllBilling,
+  updateBilling,
+  getInvoices,
+  addInvoice,
 };

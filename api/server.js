@@ -8,6 +8,9 @@ const billingRoutes = require('./routes/billing');
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+// Stripe webhooks require the raw body — mount BEFORE express.json()
+app.use('/api/billing/webhook', express.raw({ type: 'application/json' }));
+
 app.use(express.json());
 
 // Routes
