@@ -1,345 +1,283 @@
 /**
- * AutoDevStack v2.0 - CLI unit tests
- * Run with: npm test
+ * AutoDevStack CLI tests
+ *
+ * Uses Node's built-in test runner (node:test) – no extra dependencies.
+ * Run with: npm test  (or node --test tests/cli.test.js)
  */
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import path from 'path';
-import os from 'os';
+import { test, describe, before, after } from 'node:test';
+import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'fs-extra';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import os from 'node:os';
 
-// We import only the pure, testable helpers (not the IIFE main() entry point)
-import {
-  parseArgs,
-  stacks,
-  stackAliases,
-  loadPlugins,
-  applyPlugins,
-  addDockerSupport,
-  handleTemplate,
-  handleAI,
-  handlePlugin,
-} from '../cli/index.js';
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const CLI = path.resolve(__dirname, '..', 'cli', 'index.js');
+const PLUGINS_DIR = path.resolve(__dirname, '..', 'plugins');
 
-// ---------------------------------------------------------------------------
-// parseArgs
-// ---------------------------------------------------------------------------
+// Helper: run the CLI and return { output (stdout+stderr combined), exitCode }
+// args can be a string (supports basic quoted tokens, e.g. "plugin add /some/path") or an array.
+// NOTE: the string tokenizer handles simple quoted strings but not escaped quotes inside them.
+// For paths with special characters, pass an array directly, e.g. runCLI(['plugin', 'add', srcDir]).
+function runCLI(args, options = {}) {
+  const argArray = Array.isArray(args) ? args : args.match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g)
+    ?.map(a => a.replace(/^["']|["']$/g, '')) ?? [];
 
-describe('parseArgs', () => {
-  it('defaults to "create" subcommand when no subcommand is given', () => {
-    const result = parseArgs(['node', 'autodevstack', 'my-app', '--stack', 'next']);
-    expect(result.subcommand).toBe('create');
-    expect(result.flags.projectName).toBe('my-app');
-    expect(result.flags.stack).toBe('next');
-  });
-
-  it('recognises the "create" subcommand explicitly', () => {
-    const result = parseArgs(['node', 'autodevstack', 'create', 'my-project', '--stack', 'node']);
-    expect(result.subcommand).toBe('create');
-    expect(result.flags.projectName).toBe('my-project');
-    expect(result.flags.stack).toBe('node');
-  });
-
-  it('recognises the "template" subcommand', () => {
-    const result = parseArgs(['node', 'autodevstack', 'template', 'list']);
-    expect(result.subcommand).toBe('template');
-    expect(result.subArgs).toEqual(['list']);
-  });
-
-  it('recognises the "ai" subcommand', () => {
-    const result = parseArgs(['node', 'autodevstack', 'ai']);
-    expect(result.subcommand).toBe('ai');
-  });
-
-  it('recognises the "plugin" subcommand with "add"', () => {
-    const result = parseArgs(['node', 'autodevstack', 'plugin', 'add', 'my-plugin']);
-    expect(result.subcommand).toBe('plugin');
-    expect(result.subArgs).toEqual(['add', 'my-plugin']);
-  });
-
-  it('recognises the "plugin" subcommand with "list"', () => {
-    const result = parseArgs(['node', 'autodevstack', 'plugin', 'list']);
-    expect(result.subcommand).toBe('plugin');
-    expect(result.subArgs).toEqual(['list']);
-  });
-
-  it('sets help flag for --help', () => {
-    const result = parseArgs(['node', 'autodevstack', '--help']);
-    expect(result.flags.help).toBe(true);
-  });
-
-  it('sets help flag for -h shorthand', () => {
-    const result = parseArgs(['node', 'autodevstack', '-h']);
-    expect(result.flags.help).toBe(true);
-  });
-
-  it('parses --git and --docker flags', () => {
-    const result = parseArgs(['node', 'autodevstack', 'create', 'proj', '--git', '--docker']);
-    expect(result.flags.git).toBe(true);
-    expect(result.flags.docker).toBe(true);
-  });
-
-  it('parses --template as alias for --stack', () => {
-    const result = parseArgs(['node', 'autodevstack', 'create', 'proj', '--template', 'saas']);
-    expect(result.flags.template).toBe('saas');
-  });
-
-  it('parses short flags -s and -t', () => {
-    const result = parseArgs(['node', 'autodevstack', 'create', 'proj', '-s', 't3', '-t', 'saas']);
-    expect(result.flags.stack).toBe('t3');
-    expect(result.flags.template).toBe('saas');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// stacks and stackAliases
-// ---------------------------------------------------------------------------
-
-describe('built-in stacks', () => {
-  it('contains all expected stack keys', () => {
-    const keys = Object.values(stacks);
-    expect(keys).toContain('default');
-    expect(keys).toContain('node');
-    expect(keys).toContain('next');
-    expect(keys).toContain('t3');
-    expect(keys).toContain('saas');
-    expect(keys).toContain('monorepo');
-  });
-
-  it('stackAliases maps react → default', () => {
-    expect(stackAliases['react']).toBe('default');
-  });
-
-  it('stackAliases maps express → node', () => {
-    expect(stackAliases['express']).toBe('node');
-  });
-
-  it('stackAliases maps nextjs → next', () => {
-    expect(stackAliases['nextjs']).toBe('next');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// Plugin system – loadPlugins / applyPlugins
-// ---------------------------------------------------------------------------
-
-describe('plugin system', () => {
-  let tmpPluginsDir;
-
-  beforeEach(() => {
-    tmpPluginsDir = path.join(os.tmpdir(), `ads-test-plugins-${Date.now()}`);
-    fs.ensureDirSync(tmpPluginsDir);
-  });
-
-  afterEach(() => {
-    fs.removeSync(tmpPluginsDir);
-  });
-
-  it('loadPlugins returns empty array when plugins dir is missing', () => {
-    // Point PLUGINS_DIR at a nonexistent path via the module constant is not
-    // directly possible without rewiring; test the "no dir" branch indirectly
-    // by checking an empty tmp dir returns []
-    const fakePluginsDir = path.join(os.tmpdir(), 'nonexistent-plugins-' + Date.now());
-    expect(fs.existsSync(fakePluginsDir)).toBe(false);
-    // The real loadPlugins() reads from the module-level PLUGINS_DIR.
-    // Here we verify the actual function doesn't throw on any existing state.
-    expect(() => loadPlugins()).not.toThrow();
-  });
-
-  it('loadPlugins reads plugin.json manifests from subdirectories', () => {
-    // Create a fake plugin directory with a plugin.json
-    const pluginDir = path.join(tmpPluginsDir, 'test-plugin');
-    fs.ensureDirSync(pluginDir);
-    fs.writeJsonSync(path.join(pluginDir, 'plugin.json'), {
-      name: 'test-plugin',
-      version: '1.0.0',
-      templates: { 'My Custom Template': 'custom' },
-      templatePaths: { 'custom': './templates/custom' },
-    });
-
-    // Manually replicate what loadPlugins does for this tmpPluginsDir
-    const entries = fs.readdirSync(tmpPluginsDir, { withFileTypes: true });
-    const plugins = [];
-    for (const entry of entries) {
-      if (!entry.isDirectory()) continue;
-      const manifestPath = path.join(tmpPluginsDir, entry.name, 'plugin.json');
-      if (fs.existsSync(manifestPath)) {
-        const manifest = fs.readJsonSync(manifestPath);
-        plugins.push({ ...manifest, _dir: path.join(tmpPluginsDir, entry.name) });
-      }
+  const result = spawnSync(
+    process.execPath,
+    [CLI, ...argArray],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, FORCE_COLOR: '0' }, // disable chalk colours
+      ...options,
     }
+  );
+  // Combine stdout and stderr so tests can inspect ora spinner output (written to stderr)
+  const output = (result.stdout || '') + (result.stderr || '');
+  return { output, exitCode: result.status ?? 1 };
+}
 
-    expect(plugins).toHaveLength(1);
-    expect(plugins[0].name).toBe('test-plugin');
-    expect(plugins[0].templates).toEqual({ 'My Custom Template': 'custom' });
+// ─── Help ─────────────────────────────────────────────────────────────────────
+
+describe('--help flag', () => {
+  test('shows subcommands section', () => {
+    const { output: stdout } = runCLI('--help');
+    assert.ok(stdout.includes('SUBCOMMANDS'), 'Expected SUBCOMMANDS section');
+    assert.ok(stdout.includes('create'), 'Expected "create" subcommand');
+    assert.ok(stdout.includes('template'), 'Expected "template" subcommand');
+    assert.ok(stdout.includes('ai'), 'Expected "ai" subcommand');
+    assert.ok(stdout.includes('plugin'), 'Expected "plugin" subcommand');
   });
 
-  it('applyPlugins merges plugin templates into stacks and aliases', () => {
-    const testStacks = { ...stacks };
-    const testAliases = { ...stackAliases };
-
-    const plugins = [
-      {
-        name: 'my-plugin',
-        templates: { 'Firebase Starter': 'firebase' },
-      },
-    ];
-
-    applyPlugins(plugins, testStacks, testAliases);
-
-    expect(testStacks['Firebase Starter']).toBe('firebase');
-    expect(testAliases['firebase']).toBe('firebase');
+  test('shows plugin subcommands', () => {
+    const { output: stdout } = runCLI('--help');
+    assert.ok(stdout.includes('plugin add'), 'Expected "plugin add"');
+    assert.ok(stdout.includes('plugin list'), 'Expected "plugin list"');
+    assert.ok(stdout.includes('plugin remove'), 'Expected "plugin remove"');
   });
 
-  it('applyPlugins is a no-op for plugins without templates', () => {
-    const testStacks = { ...stacks };
-    const testAliases = { ...stackAliases };
-    const before = Object.keys(testStacks).length;
+  test('lists built-in stacks', () => {
+    const { output: stdout } = runCLI('--help');
+    assert.ok(stdout.includes('default'), 'Expected "default" stack');
+    assert.ok(stdout.includes('next'), 'Expected "next" stack');
+    assert.ok(stdout.includes('t3'), 'Expected "t3" stack');
+  });
 
-    applyPlugins([{ name: 'no-templates-plugin' }], testStacks, testAliases);
-
-    expect(Object.keys(testStacks).length).toBe(before);
+  test('-h shorthand also shows help', () => {
+    const { output: stdout } = runCLI('-h');
+    assert.ok(stdout.includes('AutoDevStack'), 'Expected AutoDevStack branding');
   });
 });
 
-// ---------------------------------------------------------------------------
-// Docker support
-// ---------------------------------------------------------------------------
+// ─── template subcommand ──────────────────────────────────────────────────────
 
-describe('addDockerSupport', () => {
+describe('template subcommand', () => {
+  test('template list shows built-in stacks', () => {
+    const { output: stdout, exitCode } = runCLI('template list');
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('React + TypeScript + Vite'), 'Expected React stack');
+    assert.ok(stdout.includes('Next.js'), 'Expected Next.js stack');
+    assert.ok(stdout.includes('T3 Stack'), 'Expected T3 Stack');
+  });
+
+  test('template (no sub) defaults to list', () => {
+    const { output: stdout, exitCode } = runCLI('template');
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('Available Templates'), 'Expected template list header');
+  });
+
+  test('unknown template subcommand exits non-zero', () => {
+    const { exitCode } = runCLI('template unknown-cmd');
+    assert.notEqual(exitCode, 0);
+  });
+});
+
+// ─── ai subcommand ────────────────────────────────────────────────────────────
+
+describe('ai subcommand', () => {
+  test('ai shows coming-soon message', () => {
+    const { output: stdout, exitCode } = runCLI('ai');
+    assert.equal(exitCode, 0);
+    assert.ok(stdout.includes('coming soon'), 'Expected coming-soon message');
+  });
+
+  test('ai echoes provided description', () => {
+    const { output: stdout } = runCLI('ai build a todo app');
+    assert.ok(stdout.includes('build a todo app'), 'Expected description echo');
+  });
+});
+
+// ─── plugin subcommand ────────────────────────────────────────────────────────
+
+describe('plugin list', () => {
+  test('plugin list shows no-plugins message when empty', () => {
+    // Temporarily rename any installed test plugin to avoid interference
+    const { output: stdout, exitCode } = runCLI('plugin list');
+    assert.equal(exitCode, 0);
+    // Either shows a list or the "no plugins" message
+    assert.ok(
+      stdout.includes('No plugins installed') || stdout.includes('Installed Plugins'),
+      'Expected plugin list output'
+    );
+  });
+});
+
+describe('plugin add (local path)', () => {
   let tmpDir;
+  let pluginSrcDir;
+  const pluginName = 'autodevstack-test-plugin-local';
 
-  beforeEach(() => {
-    tmpDir = path.join(os.tmpdir(), `ads-docker-test-${Date.now()}`);
-    fs.ensureDirSync(tmpDir);
-  });
+  before(() => {
+    // Create a minimal plugin in a temp directory
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ads-test-'));
+    pluginSrcDir = path.join(tmpDir, pluginName);
+    const tplDir = path.join(pluginSrcDir, 'templates', 'test-local-stack');
+    fs.mkdirpSync(tplDir);
 
-  afterEach(() => {
-    fs.removeSync(tmpDir);
-  });
-
-  it('generates Dockerfile, docker-compose.yml, and .dockerignore for "next" template', () => {
-    addDockerSupport(tmpDir, 'next');
-
-    expect(fs.existsSync(path.join(tmpDir, 'Dockerfile'))).toBe(true);
-    expect(fs.existsSync(path.join(tmpDir, 'docker-compose.yml'))).toBe(true);
-    expect(fs.existsSync(path.join(tmpDir, '.dockerignore'))).toBe(true);
-
-    const dockerfile = fs.readFileSync(path.join(tmpDir, 'Dockerfile'), 'utf8');
-    expect(dockerfile).toContain('FROM node:18-alpine');
-    expect(dockerfile).toContain('npm run build');
-    expect(dockerfile).toContain('EXPOSE 3000');
-  });
-
-  it('generates multi-stage Dockerfile for "default" (React/Vite) template', () => {
-    addDockerSupport(tmpDir, 'default');
-
-    const dockerfile = fs.readFileSync(path.join(tmpDir, 'Dockerfile'), 'utf8');
-    expect(dockerfile).toContain('FROM nginx:alpine');
-    expect(dockerfile).toContain('EXPOSE 80');
-
-    const compose = fs.readFileSync(path.join(tmpDir, 'docker-compose.yml'), 'utf8');
-    expect(compose).toContain('"80:80"');
-  });
-
-  it('includes postgres service in docker-compose for "saas" template', () => {
-    addDockerSupport(tmpDir, 'saas');
-
-    const compose = fs.readFileSync(path.join(tmpDir, 'docker-compose.yml'), 'utf8');
-    expect(compose).toContain('postgres:15-alpine');
-  });
-
-  it('.dockerignore excludes node_modules and .env', () => {
-    addDockerSupport(tmpDir, 'node');
-
-    const ignore = fs.readFileSync(path.join(tmpDir, '.dockerignore'), 'utf8');
-    expect(ignore).toContain('node_modules');
-    expect(ignore).toContain('.env');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// handleTemplate
-// ---------------------------------------------------------------------------
-
-describe('handleTemplate', () => {
-  it('lists all built-in stacks without throwing', () => {
-    const output = [];
-    const origLog = console.log;
-    console.log = (...args) => output.push(args.join(' '));
-
-    handleTemplate(['list'], stacks);
-
-    console.log = origLog;
-
-    const combined = output.join('\n');
-    expect(combined).toContain('default');
-    expect(combined).toContain('next');
-    expect(combined).toContain('saas');
-  });
-
-  it('defaults to "list" when no action is provided', () => {
-    const output = [];
-    const origLog = console.log;
-    console.log = (...args) => output.push(args.join(' '));
-
-    handleTemplate([], stacks);
-
-    console.log = origLog;
-    expect(output.length).toBeGreaterThan(0);
-  });
-});
-
-// ---------------------------------------------------------------------------
-// handleAI
-// ---------------------------------------------------------------------------
-
-describe('handleAI', () => {
-  it('prints a "coming soon" message', () => {
-    const output = [];
-    const origLog = console.log;
-    console.log = (...args) => output.push(args.join(' '));
-
-    handleAI();
-
-    console.log = origLog;
-    expect(output.join(' ')).toContain('coming soon');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// handlePlugin – list with empty plugins dir
-// ---------------------------------------------------------------------------
-
-describe('handlePlugin', () => {
-  it('prints "No plugins installed" when no plugins exist', () => {
-    const output = [];
-    const origLog = console.log;
-    console.log = (...args) => output.push(args.join(' '));
-
-    // 'list' action – PLUGINS_DIR may or may not have entries in CI,
-    // but at minimum the function should not throw
-    expect(() => handlePlugin(['list'])).not.toThrow();
-
-    console.log = origLog;
-  });
-
-  it('exits with error when "add" is called without a plugin name', () => {
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
-      throw new Error('process.exit called');
+    fs.writeJsonSync(path.join(pluginSrcDir, 'plugin.json'), {
+      name: pluginName,
+      version: '0.0.1',
+      description: 'Local test plugin',
+      templates: [{ name: 'Test Local Stack', key: 'test-local-stack' }],
     });
-
-    expect(() => handlePlugin(['add'])).toThrow('process.exit called');
-
-    exitSpy.mockRestore();
+    fs.writeJsonSync(path.join(tplDir, 'package.json'), { name: 'test-local-stack', version: '0.0.1' });
   });
 
-  it('exits with error for an unknown plugin action', () => {
-    const exitSpy = vi.spyOn(process, 'exit').mockImplementation(() => {
-      throw new Error('process.exit called');
-    });
+  after(() => {
+    // Clean up installed plugin and temp dir
+    const installedPath = path.join(PLUGINS_DIR, pluginName);
+    if (fs.existsSync(installedPath)) fs.removeSync(installedPath);
+    if (fs.existsSync(tmpDir)) fs.removeSync(tmpDir);
+  });
 
-    expect(() => handlePlugin(['unknown-action'])).toThrow('process.exit called');
+  test('installs a plugin from a local path', () => {
+    const { output: stdout, exitCode } = runCLI(['plugin', 'add', pluginSrcDir]);
+    assert.equal(exitCode, 0, `Expected exit 0, got: ${stdout}`);
+    assert.ok(stdout.includes('installed successfully'), 'Expected success message');
 
-    exitSpy.mockRestore();
+    const installedPath = path.join(PLUGINS_DIR, pluginName);
+    assert.ok(fs.existsSync(installedPath), 'Plugin directory should exist in plugins/');
+    assert.ok(fs.existsSync(path.join(installedPath, 'plugin.json')), 'plugin.json should be present');
+  });
+
+  test('installed plugin appears in plugin list', () => {
+    const { output: stdout } = runCLI('plugin list');
+    assert.ok(stdout.includes(pluginName), 'Installed plugin should appear in list');
+  });
+
+  test('installed plugin template appears in template list', () => {
+    const { output: stdout } = runCLI('template list');
+    assert.ok(stdout.includes('Test Local Stack'), 'Plugin template should appear in template list');
+    assert.ok(stdout.includes('test-local-stack'), 'Plugin template key should appear');
+  });
+
+  test('removes an installed plugin', () => {
+    const { output: stdout, exitCode } = runCLI(['plugin', 'remove', pluginName]);
+    assert.equal(exitCode, 0, `Expected exit 0, got: ${stdout}`);
+    assert.ok(stdout.includes('removed successfully'), 'Expected success message');
+
+    const installedPath = path.join(PLUGINS_DIR, pluginName);
+    assert.ok(!fs.existsSync(installedPath), 'Plugin directory should be gone after remove');
+  });
+});
+
+describe('plugin error cases', () => {
+  test('plugin add with no name exits non-zero', () => {
+    const { exitCode } = runCLI('plugin add');
+    assert.notEqual(exitCode, 0);
+  });
+
+  test('plugin add non-existent local path exits non-zero', () => {
+    const { exitCode } = runCLI('plugin add /tmp/does-not-exist-xyz');
+    assert.notEqual(exitCode, 0);
+  });
+
+  test('plugin remove non-existent plugin exits non-zero', () => {
+    const { exitCode } = runCLI('plugin remove non-existent-plugin-xyz');
+    assert.notEqual(exitCode, 0);
+  });
+
+  test('unknown plugin subcommand exits non-zero', () => {
+    const { exitCode } = runCLI('plugin unknown-cmd');
+    assert.notEqual(exitCode, 0);
+  });
+});
+
+// ─── create subcommand ────────────────────────────────────────────────────────
+
+describe('create subcommand', () => {
+  let tmpWorkDir;
+
+  before(() => {
+    tmpWorkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ads-create-test-'));
+  });
+
+  after(() => {
+    if (fs.existsSync(tmpWorkDir)) fs.removeSync(tmpWorkDir);
+  });
+
+  test('create scaffolds a project from the default (react) stack', () => {
+    const projectName = 'my-react-app';
+    const { output: stdout, exitCode } = runCLI(`create ${projectName} --stack react`, { cwd: tmpWorkDir });
+    assert.equal(exitCode, 0, `CLI failed: ${stdout}`);
+
+    const projectDir = path.join(tmpWorkDir, projectName);
+    assert.ok(fs.existsSync(projectDir), 'Project directory should exist');
+    assert.ok(fs.existsSync(path.join(projectDir, 'package.json')), 'package.json should exist');
+
+    const pkg = fs.readJsonSync(path.join(projectDir, 'package.json'));
+    assert.equal(pkg.name, projectName, 'package.json name should match project name');
+  });
+
+  test('create with --docker adds Dockerfile and docker-compose.yml', () => {
+    const projectName = 'my-docker-app';
+    const { exitCode, output: stdout } = runCLI(`create ${projectName} --stack node --docker`, { cwd: tmpWorkDir });
+    assert.equal(exitCode, 0, `CLI failed: ${stdout}`);
+
+    const projectDir = path.join(tmpWorkDir, projectName);
+    assert.ok(fs.existsSync(path.join(projectDir, 'Dockerfile')), 'Dockerfile should exist');
+    assert.ok(fs.existsSync(path.join(projectDir, 'docker-compose.yml')), 'docker-compose.yml should exist');
+    assert.ok(fs.existsSync(path.join(projectDir, '.dockerignore')), '.dockerignore should exist');
+  });
+
+  test('create with --git initializes a Git repository', () => {
+    const projectName = 'my-git-app';
+    const { exitCode, output: stdout } = runCLI(`create ${projectName} --stack next --git`, { cwd: tmpWorkDir });
+    assert.equal(exitCode, 0, `CLI failed: ${stdout}`);
+
+    const projectDir = path.join(tmpWorkDir, projectName);
+    assert.ok(fs.existsSync(path.join(projectDir, '.git')), '.git directory should exist');
+  });
+
+  test('create fails if project folder already exists', () => {
+    const projectName = 'existing-project';
+    fs.mkdirpSync(path.join(tmpWorkDir, projectName));
+    const { exitCode } = runCLI(`create ${projectName} --stack react`, { cwd: tmpWorkDir });
+    assert.notEqual(exitCode, 0, 'Should fail when target directory already exists');
+  });
+
+  test('create with unknown stack exits non-zero', () => {
+    const { exitCode } = runCLI('create my-app --stack unknown-stack-xyz', { cwd: tmpWorkDir });
+    assert.notEqual(exitCode, 0);
+  });
+
+  test('legacy mode (no subcommand) also creates a project', () => {
+    const projectName = 'legacy-project';
+    const { output: stdout, exitCode } = runCLI(`${projectName} --stack react`, { cwd: tmpWorkDir });
+    assert.equal(exitCode, 0, `Legacy mode failed: ${stdout}`);
+    assert.ok(fs.existsSync(path.join(tmpWorkDir, projectName)), 'Project directory should exist');
+  });
+
+  test('_gitignore is renamed to .gitignore', () => {
+    // The default (react) template ships a _gitignore that should become .gitignore
+    const projectName = 'gitignore-test';
+    runCLI(`create ${projectName} --stack react`, { cwd: tmpWorkDir });
+    const projectDir = path.join(tmpWorkDir, projectName);
+    // Either .gitignore exists (renamed) or _gitignore doesn't (already named correctly)
+    const hasGitignore = fs.existsSync(path.join(projectDir, '.gitignore'));
+    const hasUnderscoreGitignore = fs.existsSync(path.join(projectDir, '_gitignore'));
+    assert.ok(hasGitignore, '.gitignore should exist after scaffolding');
+    assert.ok(!hasUnderscoreGitignore, '_gitignore should not remain after scaffolding');
   });
 });

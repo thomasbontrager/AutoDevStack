@@ -7,7 +7,7 @@
     "autodevstack": "./cli/index.js"
   },
   "scripts": {
-    "test": "vitest run"
+    "test": "node --test tests/cli.test.js"
   },
   "dependencies": {
     "chalk": "^5.3.0",

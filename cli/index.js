@@ -6,12 +6,14 @@ import ora from 'ora';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
+import { createRequire } from 'module';
 
-export const __dirname = path.dirname(fileURLToPath(import.meta.url));
-export const PLUGINS_DIR = path.join(__dirname, '..', 'plugins');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const _require = createRequire(import.meta.url);
+const { version: CLI_VERSION } = _require('../package.json');
 
-// Built-in stacks (display name → template key)
-export const stacks = {
+// Built-in stacks
+const stacks = {
   "React + TypeScript + Vite": "default",
   "Node + Express + TypeScript": "node",
   "Next.js": "next",
@@ -33,179 +35,102 @@ export const stackAliases = {
   'monorepo': 'monorepo',
 };
 
-// ---------------------------------------------------------------------------
-// Plugin system
-// ---------------------------------------------------------------------------
+// Plugin registry – populated at startup from plugins/<name>/plugin.json
+const pluginTemplates = {};  // displayName -> { key, path, plugin }
+const pluginAliases = {};    // key.toLowerCase() -> key
 
-/**
- * load plugins from the plugins/ directory at startup. Each plugin must be a
- * subdirectory containing a **`plugin.json`** manifest file that follows the
- * plugin API:
- *   { name, version, templates: { "Display Name": "template-key" }, templatePaths: { "template-key": "/abs/path" } }
- *
- * Returns an array of loaded plugin objects.
- */
-export function loadPlugins() {
-  const plugins = [];
+// Load plugins from the plugins/ directory
+function loadPlugins() {
+  const pluginsDir = path.join(__dirname, '..', 'plugins');
+  if (!fs.existsSync(pluginsDir)) return;
 
-  if (!fs.existsSync(PLUGINS_DIR)) return plugins;
-
-  const entries = fs.readdirSync(PLUGINS_DIR, { withFileTypes: true });
+  const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
   for (const entry of entries) {
     if (!entry.isDirectory()) continue;
-
-    const pluginDir = path.join(PLUGINS_DIR, entry.name);
-    const manifestPath = path.join(pluginDir, 'plugin.json');
-
+    const manifestPath = path.join(pluginsDir, entry.name, 'plugin.json');
     if (!fs.existsSync(manifestPath)) continue;
 
     try {
       const manifest = fs.readJsonSync(manifestPath);
-      // Resolve any relative template paths to absolute paths
-      if (manifest.templatePaths) {
-        for (const [key, relPath] of Object.entries(manifest.templatePaths)) {
-          manifest.templatePaths[key] = path.resolve(pluginDir, relPath);
+      const templates = manifest.templates || [];
+      for (const tpl of templates) {
+        const tplPath = path.resolve(
+          pluginsDir,
+          entry.name,
+          tpl.path || `templates/${tpl.key}`
+        );
+        if (fs.existsSync(tplPath)) {
+          pluginTemplates[tpl.name] = { key: tpl.key, path: tplPath, plugin: manifest.name };
+          pluginAliases[tpl.key.toLowerCase()] = tpl.key;
         }
       }
-      plugins.push({ ...manifest, _dir: pluginDir });
-    } catch (err) {
-      console.warn(chalk.yellow(`⚠  Failed to load plugin "${entry.name}": ${err.message}`));
-    }
-  }
-
-  return plugins;
-}
-
-/**
- * Merge plugin-contributed templates into the stacks and stackAliases objects.
- */
-export function applyPlugins(plugins, stacksMap, aliasesMap) {
-  for (const plugin of plugins) {
-    if (!plugin.templates) continue;
-    for (const [displayName, key] of Object.entries(plugin.templates)) {
-      stacksMap[displayName] = key;
-      aliasesMap[key] = key;
+    } catch {
+      // Skip plugins with invalid manifests
     }
   }
 }
 
-// ---------------------------------------------------------------------------
-// Argument parsing
-// ---------------------------------------------------------------------------
+// ─── Help ────────────────────────────────────────────────────────────────────
 
-const SUBCOMMANDS = ['create', 'template', 'ai', 'plugin'];
-
-/**
- * Parse process.argv (or a provided array) into a structured result:
- *   { subcommand, subArgs, flags }
- *
- * Recognised subcommands: create, template, ai, plugin
- * Falls back to "create" for legacy invocations (no subcommand prefix).
- */
-export function parseArgs(argv = process.argv) {
-  const args = argv.slice(2);
-
-  const result = {
-    subcommand: null,
-    subArgs: [],
-    flags: {
-      projectName: null,
-      stack: null,
-      template: null,
-      git: false,
-      docker: false,
-      ai: false,
-      help: false,
-    },
-  };
-
-  // Detect subcommand
-  if (args.length > 0 && SUBCOMMANDS.includes(args[0])) {
-    result.subcommand = args[0];
-    parseSubArgs(result, args.slice(1));
-  } else {
-    // Legacy / default: treat as implicit "create"
-    result.subcommand = 'create';
-    parseSubArgs(result, args);
-  }
-
-  return result;
-}
-
-function parseSubArgs(result, args) {
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
-
-    if (arg === '--help' || arg === '-h') {
-      result.flags.help = true;
-    } else if ((arg === '--stack' || arg === '-s') && args[i + 1]) {
-      result.flags.stack = args[++i];
-    } else if ((arg === '--template' || arg === '-t') && args[i + 1]) {
-      result.flags.template = args[++i];
-    } else if (arg === '--git') {
-      result.flags.git = true;
-    } else if (arg === '--docker') {
-      result.flags.docker = true;
-    } else if (arg === '--ai') {
-      result.flags.ai = true;
-    } else if (!arg.startsWith('-')) {
-      result.subArgs.push(arg);
-    }
-  }
-
-  if (result.subArgs[0] && result.subcommand === 'create') {
-    result.flags.projectName = result.subArgs[0];
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Help
-// ---------------------------------------------------------------------------
-
-export function showHelp(stacksMap = stacks) {
-  console.log(chalk.green.bold("\n🚀 AutoDevStack v2.0 CLI\n"));
+function showHelp() {
+  console.log(chalk.green.bold(`\n🚀 AutoDevStack v${CLI_VERSION} CLI\n`));
   console.log(chalk.white("Scaffold production-ready full-stack projects in seconds.\n"));
 
   console.log(chalk.yellow.bold("USAGE:"));
-  console.log(chalk.white("  autodevstack <subcommand> [args] [options]\n"));
+  console.log(chalk.white("  autodevstack <subcommand> [options]\n"));
 
   console.log(chalk.yellow.bold("SUBCOMMANDS:"));
-  console.log(chalk.white("  create [project-name]        Scaffold a new project (default)"));
-  console.log(chalk.white("  template [list]              List available templates"));
-  console.log(chalk.white("  ai [prompt]                  AI-powered generation (coming soon)"));
-  console.log(chalk.white("  plugin add <name>            Install a community plugin"));
-  console.log(chalk.white("  plugin list                  List installed plugins\n"));
+  console.log(chalk.white("  create   [name] [opts]   Scaffold a new project (default when no subcommand)"));
+  console.log(chalk.white("  template <subcommand>    Manage and list available templates"));
+  console.log(chalk.white("  ai       [description]   AI-powered app generation (coming soon)"));
+  console.log(chalk.white("  plugin   <subcommand>    Manage plugins\n"));
 
   console.log(chalk.yellow.bold("CREATE OPTIONS:"));
-  console.log(chalk.white("  --stack, -s <name>           Specify stack (react, node, next, t3, saas, monorepo)"));
-  console.log(chalk.white("  --template, -t <name>        Alias for --stack"));
-  console.log(chalk.white("  --git                        Initialize Git repository"));
-  console.log(chalk.white("  --docker                     Add Docker support (Dockerfile + docker-compose.yml)"));
-  console.log(chalk.white("  --help, -h                   Show this help message\n"));
+  console.log(chalk.white("  --stack, -s <name>   Specify stack (react, node, next, t3, saas, monorepo)"));
+  console.log(chalk.white("  --template, -t <n>   Alias for --stack"));
+  console.log(chalk.white("  --git                Initialize a Git repository after scaffolding"));
+  console.log(chalk.white("  --docker             Add Docker support (Dockerfile + docker-compose.yml)"));
+  console.log(chalk.white("  --help, -h           Show this help message\n"));
+
+  console.log(chalk.yellow.bold("PLUGIN SUBCOMMANDS:"));
+  console.log(chalk.white("  plugin add <name>    Install a plugin from npm or a local path"));
+  console.log(chalk.white("  plugin list          List installed plugins"));
+  console.log(chalk.white("  plugin remove <name> Remove an installed plugin\n"));
+
+  console.log(chalk.yellow.bold("TEMPLATE SUBCOMMANDS:"));
+  console.log(chalk.white("  template list        List all available templates (built-in + plugins)\n"));
 
   console.log(chalk.yellow.bold("EXAMPLES:"));
-  console.log(chalk.cyan("  autodevstack create my-app"));
-  console.log(chalk.cyan("  autodevstack create my-app --stack next --git"));
+  console.log(chalk.cyan("  autodevstack my-app"));
+  console.log(chalk.cyan("  autodevstack create my-app --stack next"));
   console.log(chalk.cyan("  autodevstack create my-saas --template saas --git --docker"));
   console.log(chalk.cyan("  autodevstack template list"));
-  console.log(chalk.cyan("  autodevstack plugin add autodevstack-plugin-firebase\n"));
+  console.log(chalk.cyan("  autodevstack plugin add autodevstack-plugin-svelte"));
+  console.log(chalk.cyan("  autodevstack plugin list\n"));
 
   console.log(chalk.yellow.bold("AVAILABLE STACKS:"));
   Object.entries(stacksMap).forEach(([name, key]) => {
     console.log(chalk.white(`  ${key.padEnd(12)} - ${name}`));
   });
+
+  if (Object.keys(pluginTemplates).length > 0) {
+    console.log(chalk.yellow.bold("\nPLUGIN STACKS:"));
+    Object.entries(pluginTemplates).forEach(([name, info]) => {
+      console.log(chalk.white(`  ${info.key.padEnd(12)} - ${name} (plugin: ${info.plugin})`));
+    });
+  }
+
   console.log();
 }
 
-// ---------------------------------------------------------------------------
-// Docker support
-// ---------------------------------------------------------------------------
+// ─── Docker support ───────────────────────────────────────────────────────────
 
-export function addDockerSupport(projectDir, templateKey) {
+function addDockerSupport(projectDir, templateKey) {
   let dockerfile = '';
   let dockerCompose = '';
 
   if (templateKey === 'node' || templateKey === 'saas' || templateKey === 'next' || templateKey === 't3') {
+    const hasBuildStep = templateKey === 'next' || templateKey === 't3' || templateKey === 'saas';
     dockerfile = `FROM node:18-alpine
 
 WORKDIR /app
@@ -216,22 +141,13 @@ RUN npm ci
 
 COPY . .
 
-${templateKey === 'next' || templateKey === 't3' || templateKey === 'saas' ? 'RUN npm run build\n' : ''}
-EXPOSE 3000
+${hasBuildStep ? 'RUN npm run build\n\n' : ''}EXPOSE 3000
 
 CMD ["npm", "run", "start"]
 `;
 
-    dockerCompose = `version: '3.8'
-
-services:
-  app:
-    build: .
-    ports:
-      - "3000:3000"
-    environment:
-      - NODE_ENV=production
-${templateKey === 'saas' ? `  database:
+    const dbService = templateKey === 'saas' ? `
+  database:
     image: postgres:15-alpine
     environment:
       POSTGRES_USER: postgres
@@ -243,7 +159,18 @@ ${templateKey === 'saas' ? `  database:
       - postgres_data:/var/lib/postgresql/data
 
 volumes:
-  postgres_data:` : ''}
+  postgres_data:` : '';
+
+    dockerCompose = `version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+${dbService}
 `;
   } else if (templateKey === 'monorepo') {
     // Monorepo: copy docker-compose.yml from the infrastructure/docker directory that was
@@ -290,6 +217,33 @@ services:
     ports:
       - "80:80"
 `;
+  } else {
+    // Generic fallback for plugin templates
+    dockerfile = `FROM node:18-alpine
+
+WORKDIR /app
+
+COPY package*.json ./
+
+RUN npm ci
+
+COPY . .
+
+EXPOSE 3000
+
+CMD ["npm", "run", "start"]
+`;
+
+    dockerCompose = `version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+`;
   }
 
   fs.writeFileSync(path.join(projectDir, 'Dockerfile'), dockerfile);
@@ -308,11 +262,169 @@ build
   fs.writeFileSync(path.join(projectDir, '.dockerignore'), dockerignore);
 }
 
-// ---------------------------------------------------------------------------
-// Subcommand: create
-// ---------------------------------------------------------------------------
+// ─── Git initialization ───────────────────────────────────────────────────────
 
-(async function main() {
+function initGit(projectDir) {
+  const gitSpinner = ora('Initializing Git repository...').start();
+  const originalDir = process.cwd();
+  try {
+    process.chdir(projectDir);
+    execSync('git init', { stdio: 'ignore' });
+    execSync('git add .', { stdio: 'ignore' });
+    try {
+      execSync('git commit -m "Initial commit"', { stdio: 'ignore' });
+    } catch {
+      // Commit may fail if git user is not configured; configure locally and retry
+      try {
+        execSync('git config user.email "autodevstack@example.com"', { stdio: 'ignore' });
+        execSync('git config user.name "AutoDevStack"', { stdio: 'ignore' });
+        execSync('git commit -m "Initial commit"', { stdio: 'ignore' });
+      } catch {
+        gitSpinner.warn(chalk.yellow('Git initialized but commit failed. You may need to configure git.'));
+        process.chdir(originalDir);
+        return;
+      }
+    }
+    process.chdir(originalDir);
+    gitSpinner.succeed(chalk.green('Git repository initialized!'));
+  } catch (err) {
+    process.chdir(originalDir);
+    gitSpinner.fail(chalk.red('Failed to initialize Git.'));
+    console.error(chalk.gray(err.message));
+  }
+}
+
+// ─── Argument parsing (create subcommand) ────────────────────────────────────
+
+function parseCreateArgs(args) {
+  const flags = {
+    projectName: null,
+    stack: null,
+    template: null,
+    git: false,
+    docker: false,
+    help: false,
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--help' || arg === '-h') {
+      flags.help = true;
+    } else if ((arg === '--stack' || arg === '-s') && args[i + 1]) {
+      flags.stack = args[i + 1];
+      i++;
+    } else if ((arg === '--template' || arg === '-t') && args[i + 1]) {
+      flags.template = args[i + 1];
+      i++;
+    } else if (arg === '--git') {
+      flags.git = true;
+    } else if (arg === '--docker') {
+      flags.docker = true;
+    } else if (!arg.startsWith('-') && !flags.projectName) {
+      flags.projectName = arg;
+    }
+  }
+
+  return flags;
+}
+
+// ─── Subcommand: create ───────────────────────────────────────────────────────
+
+async function handleCreate(args) {
+  const flags = parseCreateArgs(args);
+
+  if (flags.help) {
+    showHelp();
+    process.exit(0);
+  }
+
+  // Git initialization
+  if (flags.git) {
+    const gitSpinner = ora('Initializing Git repository...').start();
+    try {
+      const originalDir = process.cwd();
+      process.chdir(projectDir);
+
+  // Build all available stack choices (built-in + plugins)
+  const allStackChoices = [
+    ...Object.keys(stacks),
+    ...Object.keys(pluginTemplates),
+  ];
+
+  const questions = [];
+
+  if (!flags.projectName) {
+    questions.push({
+      type: 'input',
+      name: 'projectName',
+      message: 'Project name:',
+      validate: (input) => {
+        if (!input.trim()) return 'Project name cannot be empty.';
+        if (!/^[a-z0-9-_]+$/i.test(input.trim())) return 'Project name can only contain letters, numbers, dashes, and underscores.';
+        return true;
+      },
+    });
+  }
+
+  const stackFlag = flags.template || flags.stack;
+  if (!stackFlag) {
+    questions.push({
+      type: 'list',
+      name: 'stack',
+      message: 'Choose a stack:',
+      choices: allStackChoices,
+    });
+  }
+
+  const answers = questions.length > 0 ? await inquirer.prompt(questions) : {};
+  const projectName = (flags.projectName || answers.projectName).trim();
+
+  let selectedStack;
+  let templateKey;
+  let templatePath;
+
+  if (stackFlag) {
+    const alias = stackFlag.toLowerCase();
+    if (stackAliases[alias]) {
+      templateKey = stackAliases[alias];
+      selectedStack = Object.keys(stacks).find(k => stacks[k] === templateKey);
+      templatePath = path.join(__dirname, '..', 'templates', templateKey);
+    } else if (pluginAliases[alias]) {
+      templateKey = pluginAliases[alias];
+      const info = Object.values(pluginTemplates).find(t => t.key === templateKey);
+      selectedStack = Object.keys(pluginTemplates).find(k => pluginTemplates[k].key === templateKey);
+      templatePath = info.path;
+    } else {
+      console.log(chalk.red(`\n❌ Unknown stack "${stackFlag}". Use --help to see available stacks.\n`));
+      process.exit(1);
+    }
+  } else {
+    selectedStack = answers.stack;
+    if (stacks[selectedStack]) {
+      templateKey = stacks[selectedStack];
+      templatePath = path.join(__dirname, '..', 'templates', templateKey);
+    } else if (pluginTemplates[selectedStack]) {
+      templateKey = pluginTemplates[selectedStack].key;
+      templatePath = pluginTemplates[selectedStack].path;
+    } else {
+      console.log(chalk.red(`\n❌ Unknown stack "${selectedStack}".\n`));
+      process.exit(1);
+    }
+  }
+
+  const projectDir = path.join(process.cwd(), projectName);
+
+  if (fs.existsSync(projectDir)) {
+    console.log(chalk.red(`\n❌ Folder "${projectName}" already exists. Choose a different name.\n`));
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(templatePath)) {
+    console.log(chalk.red(`\n❌ Template for "${selectedStack}" not found.\n`));
+    process.exit(1);
+  }
+
+  const spinner = ora(`Creating project "${projectName}"...`).start();
   try {
     fs.copySync(templatePath, projectDir);
 
@@ -323,13 +435,14 @@ build
       fs.moveSync(gitignoreFrom, gitignoreTo);
     }
 
-    // Inject project name into package.json
+    // Inject the project name into package.json
     const pkgPath = path.join(projectDir, 'package.json');
     if (fs.existsSync(pkgPath)) {
       const pkg = fs.readJsonSync(pkgPath);
       pkg.name = projectName;
       fs.writeJsonSync(pkgPath, pkg, { spaces: 2 });
     }
+  }
 
     spinner.succeed(chalk.green(`Project "${projectName}" created successfully!`));
   } catch (err) {
@@ -337,7 +450,6 @@ build
     throw err;
   }
 
-  // Docker support
   if (flags.docker) {
     const dockerSpinner = ora('Adding Docker support...').start();
     try {
@@ -349,36 +461,8 @@ build
     }
   }
 
-  // Git initialization
   if (flags.git) {
-    const gitSpinner = ora('Initializing Git repository...').start();
-    try {
-      const originalDir = process.cwd();
-      process.chdir(projectDir);
-
-      execSync('git init', { stdio: 'ignore' });
-      execSync('git add .', { stdio: 'ignore' });
-
-      try {
-        execSync('git commit -m "Initial commit"', { stdio: 'ignore' });
-      } catch {
-        try {
-          execSync('git config user.email "autodevstack@example.com"', { stdio: 'ignore' });
-          execSync('git config user.name "AutoDevStack"', { stdio: 'ignore' });
-          execSync('git commit -m "Initial commit"', { stdio: 'ignore' });
-        } catch {
-          gitSpinner.warn(chalk.yellow('Git initialized but commit failed. You may need to configure git.'));
-          process.chdir(originalDir);
-          return;
-        }
-      }
-
-      process.chdir(originalDir);
-      gitSpinner.succeed(chalk.green('Git repository initialized!'));
-    } catch (err) {
-      gitSpinner.fail(chalk.red('Failed to initialize Git.'));
-      console.error(chalk.gray(err.message));
-    }
+    initGit(projectDir);
   }
 
   console.log(chalk.blue(`\n✨ Stack: ${selectedStack}\n`));
@@ -393,95 +477,190 @@ build
   console.log(chalk.green.bold('\nHappy coding! 🎉\n'));
 }
 
-// ---------------------------------------------------------------------------
-// Subcommand: template
-// ---------------------------------------------------------------------------
+// ─── Subcommand: template ─────────────────────────────────────────────────────
 
-export function handleTemplate(subArgs, stacksMap) {
-  const action = subArgs[0] || 'list';
+async function handleTemplate(args) {
+  const sub = args[0];
 
-  if (action !== 'list') {
-    console.log(chalk.red(`\n❌ Unknown template action "${action}". Try: template list\n`));
-    process.exit(1);
+  if (!sub || sub === 'list') {
+    console.log(chalk.green.bold('\n📦 Available Templates\n'));
+
+    console.log(chalk.yellow.bold('Built-in:'));
+    Object.entries(stacks).forEach(([name, key]) => {
+      console.log(chalk.white(`  ${key.padEnd(12)} - ${name}`));
+    });
+
+    if (Object.keys(pluginTemplates).length > 0) {
+      console.log(chalk.yellow.bold('\nFrom plugins:'));
+      Object.entries(pluginTemplates).forEach(([name, info]) => {
+        console.log(chalk.white(`  ${info.key.padEnd(12)} - ${name} (plugin: ${info.plugin})`));
+      });
+    }
+
+    console.log();
+    return;
   }
 
-  console.log(chalk.green.bold("\n📦 Available Templates\n"));
-  Object.entries(stacksMap).forEach(([name, key]) => {
-    console.log(chalk.white(`  ${chalk.cyan(key.padEnd(12))} ${name}`));
+  console.log(chalk.red(`\n❌ Unknown template subcommand "${sub}". Try: template list\n`));
+  process.exit(1);
+}
+
+// ─── Subcommand: ai ───────────────────────────────────────────────────────────
+
+async function handleAi(args) {
+  const description = args.filter(a => !a.startsWith('-')).join(' ');
+  console.log(chalk.yellow('\n⚠️  AI-powered app generation is coming soon!'));
+  if (description) {
+    console.log(chalk.gray(`  Your description: "${description}"`));
+  }
+  console.log(chalk.gray('This feature will allow you to describe your app and generate a custom stack.\n'));
+}
+
+// ─── Subcommand: plugin ───────────────────────────────────────────────────────
+
+async function handlePlugin(args) {
+  const sub = args[0];
+
+  if (!sub || sub === '--help' || sub === '-h') {
+    console.log(chalk.green.bold('\n🔌 AutoDevStack Plugin Manager\n'));
+    console.log(chalk.yellow.bold('USAGE:'));
+    console.log(chalk.white('  autodevstack plugin add <name>     Install a plugin'));
+    console.log(chalk.white('  autodevstack plugin list           List installed plugins'));
+    console.log(chalk.white('  autodevstack plugin remove <name>  Remove a plugin\n'));
+    return;
+  }
+
+  if (sub === 'list') {
+    await handlePluginList();
+    return;
+  }
+
+  if (sub === 'add') {
+    const pluginName = args[1];
+    if (!pluginName) {
+      console.log(chalk.red('\n❌ Please specify a plugin name.\n'));
+      console.log(chalk.gray('  Usage: autodevstack plugin add <name>\n'));
+      process.exit(1);
+    }
+    await handlePluginAdd(pluginName);
+    return;
+  }
+
+  if (sub === 'remove') {
+    const pluginName = args[1];
+    if (!pluginName) {
+      console.log(chalk.red('\n❌ Please specify a plugin name.\n'));
+      console.log(chalk.gray('  Usage: autodevstack plugin remove <name>\n'));
+      process.exit(1);
+    }
+    await handlePluginRemove(pluginName);
+    return;
+  }
+
+  console.log(chalk.red(`\n❌ Unknown plugin subcommand "${sub}". Try: plugin add, plugin list, plugin remove\n`));
+  process.exit(1);
+}
+
+async function handlePluginList() {
+  const pluginsDir = path.join(__dirname, '..', 'plugins');
+  const installed = [];
+
+  if (fs.existsSync(pluginsDir)) {
+    const entries = fs.readdirSync(pluginsDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const manifestPath = path.join(pluginsDir, entry.name, 'plugin.json');
+      if (!fs.existsSync(manifestPath)) continue;
+      try {
+        const manifest = fs.readJsonSync(manifestPath);
+        installed.push(manifest);
+      } catch {
+        installed.push({ name: entry.name, version: '(unknown)', description: '' });
+      }
+    }
+  }
+
+  if (installed.length === 0) {
+    console.log(chalk.yellow('\n📭 No plugins installed.\n'));
+    console.log(chalk.gray('  Install one with: autodevstack plugin add <name>\n'));
+    return;
+  }
+
+  console.log(chalk.green.bold(`\n🔌 Installed Plugins (${installed.length})\n`));
+  installed.forEach(p => {
+    console.log(chalk.white(`  ${(p.name || '(unnamed)').padEnd(30)} v${p.version || '?'}  ${p.description || ''}`));
   });
   console.log();
 }
 
-// ---------------------------------------------------------------------------
-// Subcommand: ai
-// ---------------------------------------------------------------------------
+async function handlePluginAdd(pluginName) {
+  const pluginsDir = path.join(__dirname, '..', 'plugins');
+  fs.ensureDirSync(pluginsDir);
 
-export function handleAI() {
-  console.log(chalk.yellow("\n⚠️  AI-powered app generation is coming soon!"));
-  console.log(chalk.gray("This feature will allow you to describe your app and generate a custom stack.\n"));
-}
+  // Determine if this is a local path or an npm package name
+  const isLocalPath = pluginName.startsWith('.') || pluginName.startsWith('/');
 
-// ---------------------------------------------------------------------------
-// Subcommand: plugin
-// ---------------------------------------------------------------------------
-
-export function handlePlugin(subArgs) {
-  const action = subArgs[0];
-
-  if (!action || action === 'list') {
-    listPlugins();
-    return;
-  }
-
-  if (action === 'add') {
-    const pluginName = subArgs[1];
-    if (!pluginName) {
-      console.log(chalk.red('\n❌ Please specify a plugin name: autodevstack plugin add <name>\n'));
+  if (isLocalPath) {
+    const sourcePath = path.resolve(process.cwd(), pluginName);
+    if (!fs.existsSync(sourcePath)) {
+      console.log(chalk.red(`\n❌ Local path "${sourcePath}" does not exist.\n`));
       process.exit(1);
     }
     addPlugin(pluginName);
     return;
   }
 
-  if (action === 'remove') {
-    const pluginName = subArgs[1];
-    if (!pluginName) {
-      console.log(chalk.red('\n❌ Please specify a plugin name: autodevstack plugin remove <name>\n'));
+    const manifestPath = path.join(sourcePath, 'plugin.json');
+    if (!fs.existsSync(manifestPath)) {
+      console.log(chalk.red(`\n❌ No plugin.json found at "${sourcePath}".\n`));
+      process.exit(1);
+    }
+
+    let manifest;
+    try {
+      manifest = fs.readJsonSync(manifestPath);
+    } catch {
+      console.log(chalk.red('\n❌ plugin.json is not valid JSON.\n'));
       process.exit(1);
     }
     removePlugin(pluginName);
     return;
   }
 
-  console.log(chalk.red(`\n❌ Unknown plugin action "${action}". Try: plugin add <name> | plugin list | plugin remove <name>\n`));
-  process.exit(1);
-}
+    const destName = manifest.name || path.basename(sourcePath);
+    const destPath = path.join(pluginsDir, destName);
 
-function listPlugins() {
-  if (!fs.existsSync(PLUGINS_DIR)) {
-    console.log(chalk.gray('\nNo plugins installed.\n'));
-    return;
-  }
+    if (fs.existsSync(destPath)) {
+      console.log(chalk.yellow(`\n⚠️  Plugin "${destName}" is already installed. Updating...\n`));
+      fs.removeSync(destPath);
+    }
 
-  const entries = fs.readdirSync(PLUGINS_DIR, { withFileTypes: true })
-    .filter(e => e.isDirectory());
+    const spinner = ora(`Installing plugin "${destName}" from local path...`).start();
+    try {
+      fs.copySync(sourcePath, destPath);
+      spinner.succeed(chalk.green(`Plugin "${destName}" installed successfully!`));
+    } catch (err) {
+      spinner.fail(chalk.red(`Failed to install plugin "${destName}".`));
+      console.error(err.message);
+      process.exit(1);
+    }
+  } else {
+    // npm package
+    const spinner = ora(`Installing plugin "${pluginName}" from npm...`).start();
+    const tempDir = path.join(pluginsDir, '.tmp-install');
+    try {
+      fs.ensureDirSync(tempDir);
+      // Install npm package into a temporary location
+      execSync(`npm install "${pluginName}" --prefix "${tempDir}" --no-save`, { stdio: 'ignore' });
 
-  if (entries.length === 0) {
-    console.log(chalk.gray('\nNo plugins installed.\n'));
-    return;
-  }
+      const pkgDir = path.join(tempDir, 'node_modules', pluginName);
+      if (!fs.existsSync(pkgDir)) {
+        throw new Error(`Package directory not found after install: ${pkgDir}`);
+      }
 
-  console.log(chalk.green.bold('\n🔌 Installed Plugins\n'));
-  for (const entry of entries) {
-    const manifestPath = path.join(PLUGINS_DIR, entry.name, 'plugin.json');
-    if (fs.existsSync(manifestPath)) {
-      try {
-        const manifest = fs.readJsonSync(manifestPath);
-        const version = manifest.version ? chalk.gray(`v${manifest.version}`) : '';
-        const desc = manifest.description ? chalk.gray(` - ${manifest.description}`) : '';
-        console.log(chalk.white(`  ${chalk.cyan(manifest.name || entry.name)} ${version}${desc}`));
-      } catch {
-        console.log(chalk.white(`  ${entry.name}`));
+      const manifestPath = path.join(pkgDir, 'plugin.json');
+      if (!fs.existsSync(manifestPath)) {
+        throw new Error(`"${pluginName}" does not appear to be a valid AutoDevStack plugin (missing plugin.json).`);
       }
     } else {
       console.log(chalk.white(`  ${entry.name}`));
@@ -490,135 +669,78 @@ function listPlugins() {
   console.log();
 }
 
-function addPlugin(pluginName) {
-  // Sanitize plugin name to prevent path traversal.
-  // For scoped packages like @scope/name, use only the "name" portion as the directory name.
-  const safeName = pluginName.replace(/^@[^/]+\//, '').replace(/[/\\]/g, '-');
-  if (!safeName) {
-    console.log(chalk.red('\n❌ Invalid plugin name.\n'));
-    process.exit(1);
-  }
+      const manifest = fs.readJsonSync(manifestPath);
+      const destName = manifest.name || pluginName;
+      const destPath = path.join(pluginsDir, destName);
 
-  const pluginDir = path.join(PLUGINS_DIR, safeName);
-
-  if (fs.existsSync(pluginDir)) {
-    console.log(chalk.yellow(`\n⚠  Plugin "${safeName}" is already installed.\n`));
-    return;
-  }
-
-  const spinner = ora(`Installing plugin "${pluginName}"...`).start();
-
-  try {
-    // Ensure plugins directory exists
-    fs.ensureDirSync(PLUGINS_DIR);
-
-    // Install via npm into a temporary location then move to plugins dir
-    const tmpDir = path.join(PLUGINS_DIR, '.tmp-install');
-    fs.ensureDirSync(tmpDir);
-
-    execSync(`npm install --prefix "${tmpDir}" "${pluginName}" --save`, {
-      stdio: 'ignore',
-    });
-
-    // Move installed package into plugins/<name>
-    const installedPkgDir = path.join(tmpDir, 'node_modules', pluginName);
-    if (!fs.existsSync(installedPkgDir)) {
-      throw new Error(`Package "${pluginName}" could not be found after installation.`);
-    }
-
-    fs.copySync(installedPkgDir, pluginDir);
-    fs.removeSync(tmpDir);
-
-    // Validate plugin structure
-    const manifestPath = path.join(pluginDir, 'plugin.json');
-    if (!fs.existsSync(manifestPath)) {
-      // Create a minimal manifest so it appears in plugin list
-      const pkgJsonPath = path.join(pluginDir, 'package.json');
-      if (fs.existsSync(pkgJsonPath)) {
-        const pkg = fs.readJsonSync(pkgJsonPath);
-        fs.writeJsonSync(manifestPath, {
-          name: pkg.name || pluginName,
-          version: pkg.version || '0.0.0',
-          description: pkg.description || '',
-          templates: {},
-          templatePaths: {},
-        }, { spaces: 2 });
+      if (fs.existsSync(destPath)) {
+        fs.removeSync(destPath);
       }
-    }
 
-    spinner.succeed(chalk.green(`Plugin "${pluginName}" installed successfully!`));
-    console.log(chalk.gray(`  Installed to: ${pluginDir}\n`));
-  } catch (err) {
-    spinner.fail(chalk.red(`Failed to install plugin "${pluginName}".`));
-    console.error(chalk.gray(err.message));
-    // Clean up failed install
-    if (fs.existsSync(pluginDir)) fs.removeSync(pluginDir);
-    const tmpDir = path.join(PLUGINS_DIR, '.tmp-install');
-    if (fs.existsSync(tmpDir)) fs.removeSync(tmpDir);
+      fs.copySync(pkgDir, destPath);
+      spinner.succeed(chalk.green(`Plugin "${destName}" installed successfully!`));
+    } catch (err) {
+      spinner.fail(chalk.red(`Failed to install plugin "${pluginName}".`));
+      console.error(chalk.gray(err.message));
+      process.exit(1);
+    } finally {
+      fs.removeSync(tempDir);
+    }
   }
 }
 
-function removePlugin(pluginName) {
-  const safeName = path.basename(pluginName);
-  const pluginDir = path.join(PLUGINS_DIR, safeName);
+async function handlePluginRemove(pluginName) {
+  const pluginsDir = path.join(__dirname, '..', 'plugins');
+  const pluginPath = path.join(pluginsDir, pluginName);
 
-  if (!fs.existsSync(pluginDir)) {
-    console.log(chalk.red(`\n❌ Plugin "${safeName}" is not installed.\n`));
+  if (!fs.existsSync(pluginPath)) {
+    console.log(chalk.red(`\n❌ Plugin "${pluginName}" is not installed.\n`));
     process.exit(1);
   }
 
-  fs.removeSync(pluginDir);
-  console.log(chalk.green(`\n✅ Plugin "${safeName}" removed.\n`));
+  const spinner = ora(`Removing plugin "${pluginName}"...`).start();
+  try {
+    fs.removeSync(pluginPath);
+    spinner.succeed(chalk.green(`Plugin "${pluginName}" removed successfully!`));
+  } catch (err) {
+    spinner.fail(chalk.red(`Failed to remove plugin "${pluginName}".`));
+    console.error(err.message);
+    process.exit(1);
+  }
 }
 
-// ---------------------------------------------------------------------------
-// Main entry point
-// ---------------------------------------------------------------------------
+// ─── Main entry point ─────────────────────────────────────────────────────────
 
 (async function main() {
+  loadPlugins();
+
+  const args = process.argv.slice(2);
+
+  if (args.length === 0) {
+    showHelp();
+    process.exit(0);
+  }
+
+  const firstArg = args[0];
+
+  // Top-level help
+  if (firstArg === '--help' || firstArg === '-h') {
+    showHelp();
+    process.exit(0);
+  }
+
   try {
-    const { subcommand, subArgs, flags } = parseArgs();
-
-    // Load and apply plugins
-    const plugins = loadPlugins();
-    const pluginTemplatePaths = {};
-    applyPlugins(plugins, stacks, stackAliases);
-    for (const plugin of plugins) {
-      if (plugin.templatePaths) {
-        Object.assign(pluginTemplatePaths, plugin.templatePaths);
-      }
-    }
-
-    // Global --help
-    if (flags.help && subcommand !== 'plugin' && subcommand !== 'template') {
-      showHelp(stacks);
-      process.exit(0);
-    }
-
-    switch (subcommand) {
-      case 'create':
-        if (flags.help) {
-          showHelp(stacks);
-          process.exit(0);
-        }
-        await handleCreate(flags, stacks, stackAliases, pluginTemplatePaths);
-        break;
-
-      case 'template':
-        handleTemplate(subArgs, stacks);
-        break;
-
-      case 'ai':
-        handleAI();
-        break;
-
-      case 'plugin':
-        handlePlugin(subArgs);
-        break;
-
-      default:
-        showHelp(stacks);
-        process.exit(0);
+    if (firstArg === 'create') {
+      await handleCreate(args.slice(1));
+    } else if (firstArg === 'template') {
+      await handleTemplate(args.slice(1));
+    } else if (firstArg === 'ai') {
+      await handleAi(args.slice(1));
+    } else if (firstArg === 'plugin') {
+      await handlePlugin(args.slice(1));
+    } else {
+      // Legacy / default mode: no subcommand → behave as 'create'
+      await handleCreate(args);
     }
   } catch (error) {
     if (error.name === 'ExitPromptError') {
