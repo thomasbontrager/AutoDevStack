@@ -243,8 +243,23 @@ ${templateKey === 'saas' ? `  database:
       - postgres_data:/var/lib/postgresql/data
 
 volumes:
-  postgres_data:
-` : ''}`;
+  postgres_data:` : ''}
+`;
+  } else if (templateKey === 'monorepo') {
+    // Monorepo: copy docker-compose.yml from the infrastructure/docker directory that was
+    // already scaffolded as part of the template; just create a root convenience file.
+    const infraDockerDir = path.join(projectDir, 'infrastructure', 'docker');
+    const srcCompose = path.join(infraDockerDir, 'docker-compose.yml');
+    if (fs.existsSync(srcCompose)) {
+      // Copy docker-compose.yml to project root for convenience
+      fs.copyFileSync(srcCompose, path.join(projectDir, 'docker-compose.yml'));
+    }
+    // Copy .dockerignore from the template's infrastructure/docker directory to avoid duplication
+    const srcDockerignore = path.join(infraDockerDir, '.dockerignore');
+    if (fs.existsSync(srcDockerignore)) {
+      fs.copyFileSync(srcDockerignore, path.join(projectDir, '.dockerignore'));
+    }
+    return;
   } else if (templateKey === 'default') {
     dockerfile = `FROM node:18-alpine AS builder
 
@@ -297,71 +312,7 @@ build
 // Subcommand: create
 // ---------------------------------------------------------------------------
 
-export async function handleCreate(flags, stacksMap, aliasesMap, pluginTemplatePaths = {}) {
-  console.log(chalk.green.bold("\n🚀 Welcome to AutoDevStack! 🚀"));
-  console.log(chalk.gray("Scaffold your next project in seconds.\n"));
-
-  const questions = [];
-
-  if (!flags.projectName) {
-    questions.push({
-      type: 'input',
-      name: 'projectName',
-      message: 'Project name:',
-      validate: (input) => {
-        if (!input.trim()) return 'Project name cannot be empty.';
-        if (!/^[a-z0-9-_]+$/i.test(input.trim())) return 'Project name can only contain letters, numbers, dashes, and underscores.';
-        return true;
-      },
-    });
-  }
-
-  const stackFlag = flags.template || flags.stack;
-  if (!stackFlag) {
-    questions.push({
-      type: 'list',
-      name: 'stack',
-      message: 'Choose a stack:',
-      choices: Object.keys(stacksMap),
-    });
-  }
-
-  const answers = questions.length > 0 ? await inquirer.prompt(questions) : {};
-
-  const projectName = (flags.projectName || answers.projectName).trim();
-  let selectedStack;
-
-  if (stackFlag) {
-    const templateKey = aliasesMap[stackFlag.toLowerCase()];
-    if (!templateKey) {
-      console.log(chalk.red(`\n❌ Unknown stack "${stackFlag}". Use --help to see available stacks.\n`));
-      process.exit(1);
-    }
-    selectedStack = Object.keys(stacksMap).find(key => stacksMap[key] === templateKey);
-  } else {
-    selectedStack = answers.stack;
-  }
-
-  const projectDir = path.join(process.cwd(), projectName);
-
-  if (fs.existsSync(projectDir)) {
-    console.log(chalk.red(`\n❌ Folder "${projectName}" already exists. Choose a different name.\n`));
-    process.exit(1);
-  }
-
-  const templateKey = stacksMap[selectedStack];
-
-  // Resolve template path: plugin-provided path takes priority over built-in templates
-  const templatePath = pluginTemplatePaths[templateKey]
-    || path.join(__dirname, '..', 'templates', templateKey);
-
-  if (!fs.existsSync(templatePath)) {
-    console.log(chalk.red(`\n❌ Template for "${selectedStack}" not found.\n`));
-    process.exit(1);
-  }
-
-  const spinner = ora(`Creating project "${projectName}"...`).start();
-
+(async function main() {
   try {
     fs.copySync(templatePath, projectDir);
 
