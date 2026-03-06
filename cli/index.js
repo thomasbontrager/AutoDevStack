@@ -692,15 +692,14 @@ async function handleSaas(args) {
     console.log(chalk.white('  autodevstack saas <project-name> [options]\n'));
     console.log(chalk.yellow.bold('OPTIONS:'));
     console.log(chalk.white('  --git      Initialize Git repository'));
-    console.log(chalk.white('  --docker   Add Docker + PostgreSQL compose file'));
     console.log(chalk.white('  --help     Show this help message\n'));
-    console.log(chalk.yellow.bold('INCLUDES:'));
+    console.log(chalk.yellow.bold('INCLUDES (always generated):'));
     console.log(chalk.white('  • Auth           NextAuth.js (GitHub, Google, Email)'));
     console.log(chalk.white('  • Database       Prisma ORM + PostgreSQL'));
     console.log(chalk.white('  • API            tRPC (type-safe end-to-end)'));
     console.log(chalk.white('  • Payments       Stripe (subscriptions + webhooks)'));
     console.log(chalk.white('  • Dashboard      Protected admin & user dashboard'));
-    console.log(chalk.white('  • Deployment     Dockerfile + docker-compose.yml\n'));
+    console.log(chalk.white('  • Deployment     Dockerfile + docker-compose.yml (always included)\n'));
     process.exit(0);
   }
 
@@ -755,7 +754,10 @@ async function handleSaas(args) {
       fs.writeJsonSync(pkgPath, pkg, { spaces: 2 });
     }
 
-    // Always add Docker support for the SaaS generator (includes postgres service)
+    // Always add Docker support for the SaaS generator: PostgreSQL is a hard
+    // dependency of the SaaS stack (Prisma requires a running database), so
+    // Dockerfile + docker-compose.yml with a postgres service are generated
+    // unconditionally to ensure the project is immediately runnable.
     addDockerSupport(projectDir, 'saas');
 
     if (flags.git) {
