@@ -226,6 +226,64 @@ describe('POST /api/deploy', () => {
     }, { Authorization: `Bearer ${authToken}` });
     assert.equal(res.status, 400);
   });
+
+  test('accepts optional gitUrl field', async () => {
+    const res = await request('POST', '/api/deploy', {
+      projectId,
+      gitUrl: 'https://github.com/user/my-app.git',
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 201);
+    assert.equal(res.body.deployment.gitUrl, 'https://github.com/user/my-app.git');
+  });
+
+  test('returns 400 for invalid gitUrl', async () => {
+    const res = await request('POST', '/api/deploy', {
+      projectId,
+      gitUrl: 'not-a-valid-url',
+    }, { Authorization: `Bearer ${authToken}` });
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+});
+
+describe('GET /api/deploy/:id', () => {
+  let deploymentId;
+
+  before(async () => {
+    // Create a project and deployment for these tests
+    const projRes = await request('POST', '/api/projects/create', {
+      name: 'get-deploy-test',
+      stack: 'node',
+    }, { Authorization: `Bearer ${authToken}` });
+    const pid = projRes.body.project.id;
+
+    const depRes = await request('POST', '/api/deploy', {
+      projectId: pid,
+    }, { Authorization: `Bearer ${authToken}` });
+    deploymentId = depRes.body.deployment.id;
+  });
+
+  test('returns 401 without auth token', async () => {
+    const res = await request('GET', `/api/deploy/${deploymentId}`);
+    assert.equal(res.status, 401);
+  });
+
+  test('returns 404 for nonexistent deployment', async () => {
+    const res = await request('GET', '/api/deploy/deploy_nonexistent', null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 404);
+  });
+
+  test('returns deployment by id', async () => {
+    const res = await request('GET', `/api/deploy/${deploymentId}`, null, {
+      Authorization: `Bearer ${authToken}`,
+    });
+    assert.equal(res.status, 200);
+    assert.ok(res.body.deployment);
+    assert.equal(res.body.deployment.id, deploymentId);
+    assert.ok(res.body.deployment.status);
+  });
 });
 
 describe('GET /api/projects', () => {

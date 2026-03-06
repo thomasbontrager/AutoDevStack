@@ -51,37 +51,15 @@ function createDeployment(deployment) {
   return deployment;
 }
 
-function getSubscriptionByUsername(username) {
+function updateDeployment(id, fields) {
   const db = read();
-  const subs = db.subscriptions || [];
-  return subs.find(s => s.username === username) || null;
-}
-
-function upsertSubscription(subscription) {
-  const db = read();
-  if (!db.subscriptions) db.subscriptions = [];
-  const idx = db.subscriptions.findIndex(s => s.username === subscription.username);
-  if (idx >= 0) {
-    db.subscriptions[idx] = subscription;
-  } else {
-    db.subscriptions.push(subscription);
+  const idx = db.deployments.findIndex(d => d.id === id);
+  if (idx !== -1) {
+    db.deployments[idx] = { ...db.deployments[idx], ...fields };
+    write(db);
+    return db.deployments[idx];
   }
-  write(db);
-  return subscription;
-}
-
-function getInvoicesByUsername(username) {
-  const db = read();
-  const invoices = db.invoices || [];
-  return invoices.filter(i => i.username === username);
-}
-
-function createInvoice(invoice) {
-  const db = read();
-  if (!db.invoices) db.invoices = [];
-  db.invoices.push(invoice);
-  write(db);
-  return invoice;
+  return null;
 }
 
 module.exports = {
@@ -92,8 +70,5 @@ module.exports = {
   createProject,
   getDeployments,
   createDeployment,
-  getSubscriptionByUsername,
-  upsertSubscription,
-  getInvoicesByUsername,
-  createInvoice,
+  updateDeployment,
 };

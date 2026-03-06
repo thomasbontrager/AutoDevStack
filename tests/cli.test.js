@@ -282,90 +282,20 @@ describe('create subcommand', () => {
   });
 });
 
-// ─── domain subcommand ────────────────────────────────────────────────────────
+// ─── deploy subcommand ────────────────────────────────────────────────────────
 
-describe('domain subcommand', () => {
-  // Use a unique temp dir as the HOME so domains.json doesn't pollute the real user's config
-  let fakeHome;
-
-  before(() => {
-    fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'ads-domain-test-'));
-  });
-
-  after(() => {
-    if (fs.existsSync(fakeHome)) fs.removeSync(fakeHome);
-  });
-
-  function runDomainCLI(args, opts = {}) {
-    return runCLI(args, { env: { ...process.env, FORCE_COLOR: '0', HOME: fakeHome }, ...opts });
-  }
-
-  test('domain list shows no-domains message when empty', () => {
-    const { output, exitCode } = runDomainCLI('domain list');
+describe('deploy subcommand', () => {
+  test('deploy --help shows usage', () => {
+    const { output, exitCode } = runCLI('deploy --help');
     assert.equal(exitCode, 0);
-    assert.ok(output.includes('No domains configured'), 'Expected no-domains message');
+    assert.ok(output.includes('deploy'), 'Expected "deploy" in output');
+    assert.ok(output.includes('--git-url'), 'Expected "--git-url" option');
+    assert.ok(output.includes('--env'), 'Expected "--env" option');
   });
 
-  test('domain add connects a valid domain to a project', () => {
-    const { output, exitCode } = runDomainCLI('domain add example.com --project my-app');
-    assert.equal(exitCode, 0, `Expected exit 0, got: ${output}`);
-    assert.ok(output.includes('example.com'), 'Expected domain in output');
-    assert.ok(output.includes('my-app'), 'Expected project name in output');
-    assert.ok(output.includes('CNAME'), 'Expected DNS record instructions');
-  });
-
-  test('domain list shows added domain', () => {
-    const { output, exitCode } = runDomainCLI('domain list');
+  test('deploy -h shorthand also shows help', () => {
+    const { output, exitCode } = runCLI('deploy -h');
     assert.equal(exitCode, 0);
-    assert.ok(output.includes('example.com'), 'Expected domain in list');
-    assert.ok(output.includes('my-app'), 'Expected project in list');
-  });
-
-  test('domain add rejects duplicate domain', () => {
-    const { output, exitCode } = runDomainCLI('domain add example.com --project another-app');
-    assert.notEqual(exitCode, 0, 'Should fail for duplicate domain');
-    assert.ok(output.includes('already configured'), 'Expected already-configured message');
-  });
-
-  test('domain add rejects invalid domain name', () => {
-    const { output, exitCode } = runDomainCLI('domain add not-a-valid-domain --project my-app');
-    assert.notEqual(exitCode, 0);
-    assert.ok(output.includes('not a valid domain'), 'Expected validation error');
-  });
-
-  test('domain add with no domain exits non-zero', () => {
-    const { exitCode } = runDomainCLI('domain add');
-    assert.notEqual(exitCode, 0);
-  });
-
-  test('domain remove removes an existing domain', () => {
-    const { output, exitCode } = runDomainCLI('domain remove example.com');
-    assert.equal(exitCode, 0, `Expected exit 0, got: ${output}`);
-    assert.ok(output.includes('removed'), 'Expected removal confirmation');
-  });
-
-  test('domain list is empty after remove', () => {
-    const { output, exitCode } = runDomainCLI('domain list');
-    assert.equal(exitCode, 0);
-    assert.ok(output.includes('No domains configured'), 'Expected empty list after remove');
-  });
-
-  test('domain remove non-existent domain exits non-zero', () => {
-    const { output, exitCode } = runDomainCLI('domain remove nonexistent.com');
-    assert.notEqual(exitCode, 0);
-    assert.ok(output.includes('not configured'), 'Expected not-configured message');
-  });
-
-  test('unknown domain subcommand exits non-zero', () => {
-    const { exitCode } = runDomainCLI('domain unknown-cmd');
-    assert.notEqual(exitCode, 0);
-  });
-
-  test('--help shows domain subcommands', () => {
-    const { output } = runCLI('--help');
-    assert.ok(output.includes('domain'), 'Expected "domain" in help');
-    assert.ok(output.includes('domain add'), 'Expected "domain add" in help');
-    assert.ok(output.includes('domain list'), 'Expected "domain list" in help');
-    assert.ok(output.includes('domain remove'), 'Expected "domain remove" in help');
+    assert.ok(output.includes('deploy'), 'Expected deploy help output');
   });
 });

@@ -40,9 +40,10 @@ export const stackAliases = {
 
 // Plugin registry – populated by loadPlugins() at startup
 const pluginTemplates = {};
-const pluginAliases = {};
+const pluginAliases   = {};
 
-// Load plugins from the plugins/ directory
+// ─── Plugin loader ────────────────────────────────────────────────────────────
+
 function loadPlugins() {
   const pluginsDir = path.join(__dirname, '..', 'plugins');
   if (!fs.existsSync(pluginsDir)) return;
@@ -54,21 +55,18 @@ function loadPlugins() {
     if (!fs.existsSync(manifestPath)) continue;
     try {
       const manifest = fs.readJsonSync(manifestPath);
-      if (!Array.isArray(manifest.templates)) continue;
-      for (const tpl of manifest.templates) {
-        if (!tpl.key) continue;
-        const tplPath = tpl.path
-          ? path.resolve(pluginsDir, entry.name, tpl.path)
-          : path.join(pluginsDir, entry.name, 'templates', tpl.key);
-        pluginTemplates[tpl.name || tpl.key] = {
-          key: tpl.key,
-          path: tplPath,
-          plugin: manifest.name || entry.name,
-        };
-        pluginAliases[tpl.key.toLowerCase()] = tpl.key;
+      if (Array.isArray(manifest.templates)) {
+        manifest.templates.forEach(t => {
+          const key  = t.key || t.name.toLowerCase().replace(/\s+/g, '-');
+          const tPath = t.path
+            ? path.resolve(pluginsDir, entry.name, t.path)
+            : path.join(__dirname, '..', 'templates', key);
+          pluginTemplates[t.name] = { key, path: tPath, plugin: manifest.name };
+          pluginAliases[key] = key;
+        });
       }
     } catch {
-      // skip invalid plugin manifests
+      // Skip invalid manifests silently
     }
   }
 }
@@ -104,17 +102,23 @@ function showHelp() {
   console.log(chalk.yellow.bold("TEMPLATE SUBCOMMANDS:"));
   console.log(chalk.white("  template list        List all available templates (built-in + plugins)\n"));
 
-  console.log(chalk.yellow.bold("DOMAIN SUBCOMMANDS:"));
-  console.log(chalk.white("  domain add <domain> --project <name>   Connect a custom domain to a project"));
-  console.log(chalk.white("  domain list                            List all configured domains"));
-  console.log(chalk.white("  domain remove <domain>                 Remove a domain mapping\n"));
+  console.log(chalk.yellow.bold("SUBCOMMANDS:"));
+  console.log(chalk.white("  create [name]        Scaffold a new project (default action)"));
+  console.log(chalk.white("  deploy [name]        Deploy a project to the AutoDevStack platform"));
+  console.log(chalk.white("  template list        List all available templates"));
+  console.log(chalk.white("  ai [description]     AI-powered app generation (coming soon)"));
+  console.log(chalk.white("  plugin add <name>    Install a plugin"));
+  console.log(chalk.white("  plugin list          List installed plugins"));
+  console.log(chalk.white("  plugin remove <name> Remove an installed plugin\n"));
 
   console.log(chalk.yellow.bold("EXAMPLES:"));
-  console.log(chalk.cyan("  autodevstack create my-app --stack next"));
-  console.log(chalk.cyan("  autodevstack create my-saas --template saas --git --docker"));
-  console.log(chalk.cyan("  autodevstack domain add example.com --project my-app"));
-  console.log(chalk.cyan("  autodevstack domain list"));
-  console.log(chalk.cyan("  autodevstack plugin add ./my-plugin\n"));
+  console.log(chalk.cyan("  autodevstack my-app"));
+  console.log(chalk.cyan("  autodevstack my-app --stack next"));
+  console.log(chalk.cyan("  autodevstack my-saas --template saas --git --docker"));
+  console.log(chalk.cyan("  autodevstack my-platform --stack monorepo"));
+  console.log(chalk.cyan("  autodevstack --ai"));
+  console.log(chalk.cyan("  autodevstack my-ai-app --stack ai --git --docker"));
+  console.log(chalk.cyan("  autodevstack deploy my-app --git-url https://github.com/user/my-app.git\n"));
 
   console.log(chalk.yellow.bold("AVAILABLE STACKS:"));
   Object.entries(stacks).forEach(([name, key]) => {
@@ -276,11 +280,21 @@ build
   fs.writeFileSync(path.join(projectDir, '.dockerignore'), dockerignore);
 }
 
-async function registerWithPlatform(projectName, templateKey, description, apiUrl) {
-  const url = apiUrl || 'http://localhost:4000';
+// ─── Platform API helpers ─────────────────────────────────────────────────────
 
-  // Prompt for platform credentials
-  const { username, password } = await inquirer.prompt([
+async function apiLogin(url, username, password) {
+  const loginRes = await fetch(`${url}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ username, password }),
+  });
+  const loginData = await loginRes.json();
+  if (!loginRes.ok) throw new Error(loginData.error || 'Login failed');
+  return loginData.token;
+}
+
+async function promptCredentials() {
+  return inquirer.prompt([
     {
       type: 'input',
       name: 'username',
@@ -295,50 +309,6 @@ async function registerWithPlatform(projectName, templateKey, description, apiUr
       validate: input => input ? true : 'Password cannot be empty.',
     },
   ]);
-
-  // Login
-  let token;
-  try {
-    const loginRes = await fetch(`${url}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ username, password }),
-    });
-    const loginData = await loginRes.json();
-    if (!loginRes.ok) {
-      throw new Error(loginData.error || 'Login failed');
-    }
-    token = loginData.token;
-  } catch (err) {
-    throw new Error(`Failed to authenticate with platform: ${err.message}`);
-  }
-
-  // Register project
-  const registerRes = await fetch(`${url}/api/projects/create`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${token}`,
-    },
-    body: JSON.stringify({ name: projectName, stack: templateKey, description }),
-  });
-  const registerData = await registerRes.json();
-  if (!registerRes.ok) {
-    throw new Error(registerData.error || 'Project registration failed');
-  }
-  return registerData.project;
-}
-
-// ─── Git initialization ───────────────────────────────────────────────────────
-
-function initGit(projectDir) {
-  try {
-    execSync('git init', { cwd: projectDir, stdio: 'ignore' });
-    execSync('git add -A', { cwd: projectDir, stdio: 'ignore' });
-    execSync('git commit -m "Initial commit"', { cwd: projectDir, stdio: 'ignore' });
-  } catch {
-    // Git init failures are non-fatal
-  }
 }
 
 // ─── AI project generation ────────────────────────────────────────────────────
@@ -380,10 +350,10 @@ async function generateAIProject(flags) {
 
   const answers = await inquirer.prompt(questions);
 
-  const projectName = (flags.projectName || answers.projectName).trim();
+  const projectName    = (flags.projectName || answers.projectName).trim();
   const appDescription = answers.appDescription.trim();
-  const aiProvider = answers.aiProvider;
-  const aiModel = aiProvider === 'anthropic' ? 'claude-3-haiku-20240307' : 'gpt-4o-mini';
+  const aiProvider     = answers.aiProvider;
+  const aiModel        = aiProvider === 'anthropic' ? 'claude-3-haiku-20240307' : 'gpt-4o-mini';
 
   const projectDir = path.join(process.cwd(), projectName);
 
@@ -487,6 +457,35 @@ async function generateAIProject(flags) {
   } catch (err) {
     spinner.fail(chalk.red('Failed to generate AI project.'));
     throw err;
+  }
+
+  console.log(chalk.magenta(`\n✨ Your AI app is ready!\n`));
+  console.log(chalk.bold('Stack:'));
+  console.log(chalk.gray('  • Frontend:    Next.js 15 + Tailwind CSS (port 3000)'));
+  console.log(chalk.gray('  • Backend:     Node.js + Express + Prisma (port 4000)'));
+  console.log(chalk.gray(`  • AI Pipeline: LangChain + ${aiProvider === 'anthropic' ? 'Anthropic Claude' : 'OpenAI GPT'} (port 5000)`));
+  console.log(chalk.gray('  • Database:    PostgreSQL\n'));
+  console.log(chalk.bold('Next steps:'));
+  console.log(chalk.cyan(`  cd ${projectName}`));
+  console.log(chalk.cyan('  cp .env.example .env'));
+  console.log(chalk.cyan(`  # Add your ${aiProvider === 'anthropic' ? 'ANTHROPIC_API_KEY' : 'OPENAI_API_KEY'} to .env`));
+  console.log(chalk.cyan('  npm install'));
+  console.log(chalk.cyan('  docker-compose up   # start postgres'));
+  console.log(chalk.cyan('  npm run db:push     # apply schema'));
+  console.log(chalk.cyan('  npm run dev         # start all services'));
+  console.log(chalk.green.bold('\nHappy building! 🤖🎉\n'));
+}
+
+// ─── Git initialisation ───────────────────────────────────────────────────────
+
+function initGit(projectDir) {
+  try {
+    execSync('git init', { cwd: projectDir, stdio: 'ignore' });
+    execSync('git add -A', { cwd: projectDir, stdio: 'ignore' });
+    execSync('git commit -m "Initial commit from AutoDevStack"', { cwd: projectDir, stdio: 'ignore' });
+    console.log(chalk.green('✅ Git repository initialised.'));
+  } catch {
+    console.log(chalk.yellow('⚠️  Could not initialise Git repository.'));
   }
 }
 
@@ -601,6 +600,12 @@ async function handleCreate(args) {
     }
   }
 
+  // If the chosen template is 'ai', delegate to AI project generation
+  if (templateKey === 'ai') {
+    await generateAIProject({ ...flags, projectName });
+    return;
+  }
+
   const projectDir = path.join(process.cwd(), projectName);
 
   if (fs.existsSync(projectDir)) {
@@ -613,7 +618,7 @@ async function handleCreate(args) {
     process.exit(1);
   }
 
-  const spinner = ora(`Scaffolding "${projectName}" with ${selectedStack}...`).start();
+  const spinner = ora(`Scaffolding "${projectName}"...`).start();
 
   try {
     fs.copySync(templatePath, projectDir);
@@ -633,9 +638,7 @@ async function handleCreate(args) {
       fs.writeJsonSync(pkgPath, pkg, { spaces: 2 });
     }
 
-    if (flags.docker) {
-      addDockerSupport(projectDir, templateKey);
-    }
+    if (flags.docker) addDockerSupport(projectDir, templateKey);
 
     spinner.succeed(chalk.green(`Project "${projectName}" created successfully!`));
   } catch (err) {
@@ -696,6 +699,175 @@ async function handleAi(args) {
     console.log(chalk.gray(`  Your description: "${description}"`));
   }
   console.log(chalk.gray('This feature will allow you to describe your app and generate a custom stack.\n'));
+}
+
+// ─── Subcommand: deploy ───────────────────────────────────────────────────────
+
+function parseDeployArgs(args) {
+  const flags = {
+    projectName: null,
+    gitUrl: null,
+    environment: 'production',
+    apiUrl: null,
+    help: false,
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === '--help' || arg === '-h') {
+      flags.help = true;
+    } else if (arg === '--git-url' && args[i + 1]) {
+      flags.gitUrl = args[i + 1];
+      i++;
+    } else if (arg === '--env' && args[i + 1]) {
+      flags.environment = args[i + 1];
+      i++;
+    } else if (arg === '--api-url' && args[i + 1]) {
+      flags.apiUrl = args[i + 1];
+      i++;
+    } else if (!arg.startsWith('-') && !flags.projectName) {
+      flags.projectName = arg;
+    }
+  }
+
+  return flags;
+}
+
+async function handleDeploy(args) {
+  const flags = parseDeployArgs(args);
+
+  if (flags.help) {
+    console.log(chalk.green.bold('\n🚀 AutoDevStack Deploy\n'));
+    console.log(chalk.yellow.bold('USAGE:'));
+    console.log(chalk.white('  autodevstack deploy [project-name] [options]\n'));
+    console.log(chalk.yellow.bold('OPTIONS:'));
+    console.log(chalk.white('  --git-url <url>      Git repository URL to deploy from'));
+    console.log(chalk.white('  --env <name>         Target environment (default: production)'));
+    console.log(chalk.white('  --api-url <url>      Platform API URL (default: http://localhost:4000)'));
+    console.log(chalk.white('  --help, -h           Show this help message\n'));
+    console.log(chalk.yellow.bold('EXAMPLES:'));
+    console.log(chalk.cyan('  autodevstack deploy my-app'));
+    console.log(chalk.cyan('  autodevstack deploy my-app --git-url https://github.com/user/my-app.git'));
+    console.log(chalk.cyan('  autodevstack deploy my-app --env staging\n'));
+    return;
+  }
+
+  const apiUrl = flags.apiUrl || 'http://localhost:4000';
+
+  // Authenticate with the platform API
+  console.log(chalk.bold('\n🔐 Authenticating with AutoDevStack platform...\n'));
+  let token;
+  try {
+    const { username, password } = await promptCredentials();
+    token = await apiLogin(apiUrl, username, password);
+    console.log(chalk.green('✅ Authenticated successfully.\n'));
+  } catch (err) {
+    console.log(chalk.red(`\n❌ Authentication failed: ${err.message}\n`));
+    process.exit(1);
+  }
+
+  const authHeader = { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` };
+
+  // Resolve project name
+  let projectName = flags.projectName;
+  if (!projectName) {
+    const answer = await inquirer.prompt([{
+      type: 'input',
+      name: 'projectName',
+      message: 'Project name to deploy:',
+      validate: input => input.trim() ? true : 'Project name cannot be empty.',
+    }]);
+    projectName = answer.projectName.trim();
+  }
+
+  // Resolve git URL – detect from local repo if not supplied
+  let gitUrl = flags.gitUrl;
+  if (!gitUrl) {
+    try {
+      gitUrl = execSync('git remote get-url origin', { stdio: 'pipe' }).toString().trim();
+      console.log(chalk.gray(`  Using git remote: ${gitUrl}`));
+    } catch {
+      console.log(chalk.gray('  Not a git repository or no remote configured – please provide --git-url'));
+    }
+  }
+  if (!gitUrl) {
+    const answer = await inquirer.prompt([{
+      type: 'input',
+      name: 'gitUrl',
+      message: 'Git repository URL:',
+      validate: input => input.trim() ? true : 'Git URL cannot be empty.',
+    }]);
+    gitUrl = answer.gitUrl.trim();
+  }
+
+  // Find or create the project on the platform
+  const spinner = ora(`Looking up project "${projectName}"...`).start();
+  let projectId;
+  try {
+    const listRes = await fetch(`${apiUrl}/api/projects`, { headers: authHeader });
+    const listData = await listRes.json();
+    const existing = (listData.projects || []).find(
+      p => p.name.toLowerCase() === projectName.toLowerCase(),
+    );
+
+    if (existing) {
+      projectId = existing.id;
+      spinner.succeed(chalk.green(`Found project "${projectName}" (${projectId})`));
+    } else {
+      spinner.text = `Creating project "${projectName}" on platform...`;
+      const createRes = await fetch(`${apiUrl}/api/projects/create`, {
+        method: 'POST',
+        headers: authHeader,
+        body: JSON.stringify({ name: projectName, stack: 'default' }),
+      });
+      const createData = await createRes.json();
+      if (!createRes.ok) {
+        spinner.fail(chalk.red(`Failed to create project: ${createData.error}`));
+        process.exit(1);
+      }
+      projectId = createData.project.id;
+      spinner.succeed(chalk.green(`Created project "${projectName}" (${projectId})`));
+    }
+  } catch (err) {
+    spinner.fail(chalk.red(`Could not reach platform API: ${err.message}`));
+    process.exit(1);
+  }
+
+  // Trigger the deployment
+  const deploySpinner = ora('Triggering deployment...').start();
+  try {
+    const deployRes = await fetch(`${apiUrl}/api/deploy`, {
+      method: 'POST',
+      headers: authHeader,
+      body: JSON.stringify({
+        projectId,
+        gitUrl,
+        environment: flags.environment,
+      }),
+    });
+    const deployData = await deployRes.json();
+    if (!deployRes.ok) {
+      deploySpinner.fail(chalk.red(`Deployment failed: ${deployData.error}`));
+      process.exit(1);
+    }
+
+    const deployment = deployData.deployment;
+    deploySpinner.succeed(chalk.green(`Deployment queued! (ID: ${deployment.id})`));
+
+    console.log(chalk.bold('\n📦 Deployment Details:'));
+    console.log(chalk.white(`  Project:     ${deployment.projectName}`));
+    console.log(chalk.white(`  Environment: ${deployment.environment}`));
+    console.log(chalk.white(`  Status:      ${deployment.status}`));
+    console.log(chalk.white(`  Git URL:     ${gitUrl}`));
+    if (deployment.buildUrl) {
+      console.log(chalk.white(`  URL:         ${deployment.buildUrl}`));
+    }
+    console.log(chalk.gray(`\n  Track progress: GET ${apiUrl}/api/deploy/${deployment.id}\n`));
+    console.log(chalk.green.bold('🚀 Deployment triggered successfully!\n'));
+  } catch (err) {
+    deploySpinner.fail(chalk.red(`Could not trigger deployment: ${err.message}`));
+    process.exit(1);
+  }
 }
 
 // ─── Subcommand: plugin ───────────────────────────────────────────────────────
@@ -1057,16 +1229,17 @@ function handleDomainRemove(domain) {
   }
 
   try {
+    // Subcommand dispatch
     if (firstArg === 'create') {
       await handleCreate(args.slice(1));
+    } else if (firstArg === 'deploy') {
+      await handleDeploy(args.slice(1));
     } else if (firstArg === 'template') {
       await handleTemplate(args.slice(1));
     } else if (firstArg === 'ai') {
       await handleAi(args.slice(1));
     } else if (firstArg === 'plugin') {
       await handlePlugin(args.slice(1));
-    } else if (firstArg === 'domain') {
-      await handleDomain(args.slice(1));
     } else {
       // Legacy / default mode: no subcommand → behave as 'create'
       await handleCreate(args);
