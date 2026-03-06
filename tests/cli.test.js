@@ -281,3 +281,105 @@ describe('create subcommand', () => {
     assert.ok(!hasUnderscoreGitignore, '_gitignore should not remain after scaffolding');
   });
 });
+
+// ─── saas subcommand ──────────────────────────────────────────────────────────
+
+describe('saas subcommand', () => {
+  let tmpWorkDir;
+
+  before(() => {
+    tmpWorkDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ads-saas-test-'));
+  });
+
+  after(() => {
+    if (fs.existsSync(tmpWorkDir)) fs.removeSync(tmpWorkDir);
+  });
+
+  test('saas --help exits zero and shows usage', () => {
+    const { output: stdout, exitCode } = runCLI('saas --help');
+    assert.equal(exitCode, 0, `Expected exit 0, got: ${stdout}`);
+    assert.ok(stdout.includes('SaaS'), 'Expected SaaS branding');
+    assert.ok(stdout.includes('Auth'), 'Expected Auth mention');
+    assert.ok(stdout.includes('Stripe'), 'Expected Stripe mention');
+    assert.ok(stdout.includes('Prisma'), 'Expected Prisma mention');
+  });
+
+  test('saas scaffolds a project with the saas template', () => {
+    const projectName = 'my-saas-project';
+    const { output: stdout, exitCode } = runCLI(`saas ${projectName}`, { cwd: tmpWorkDir });
+    assert.equal(exitCode, 0, `CLI failed: ${stdout}`);
+
+    const projectDir = path.join(tmpWorkDir, projectName);
+    assert.ok(fs.existsSync(projectDir), 'Project directory should exist');
+    assert.ok(fs.existsSync(path.join(projectDir, 'package.json')), 'package.json should exist');
+
+    const pkg = fs.readJsonSync(path.join(projectDir, 'package.json'));
+    assert.equal(pkg.name, projectName, 'package.json name should match project name');
+  });
+
+  test('saas always generates docker-compose.yml with postgres service', () => {
+    const projectName = 'my-saas-docker';
+    const { output: stdout, exitCode } = runCLI(`saas ${projectName}`, { cwd: tmpWorkDir });
+    assert.equal(exitCode, 0, `CLI failed: ${stdout}`);
+
+    const projectDir = path.join(tmpWorkDir, projectName);
+    assert.ok(fs.existsSync(path.join(projectDir, 'docker-compose.yml')), 'docker-compose.yml should exist');
+    assert.ok(fs.existsSync(path.join(projectDir, 'Dockerfile')), 'Dockerfile should exist');
+
+    const compose = fs.readFileSync(path.join(projectDir, 'docker-compose.yml'), 'utf8');
+    assert.ok(compose.includes('postgres'), 'docker-compose.yml should include postgres service');
+  });
+
+  test('saas scaffolds prisma schema', () => {
+    const projectName = 'my-saas-prisma';
+    const { output: stdout, exitCode } = runCLI(`saas ${projectName}`, { cwd: tmpWorkDir });
+    assert.equal(exitCode, 0, `CLI failed: ${stdout}`);
+
+    const projectDir = path.join(tmpWorkDir, projectName);
+    assert.ok(
+      fs.existsSync(path.join(projectDir, 'prisma', 'schema.prisma')),
+      'prisma/schema.prisma should exist'
+    );
+  });
+
+  test('saas scaffolds .env.example with database and stripe vars', () => {
+    const projectName = 'my-saas-env';
+    const { output: stdout, exitCode } = runCLI(`saas ${projectName}`, { cwd: tmpWorkDir });
+    assert.equal(exitCode, 0, `CLI failed: ${stdout}`);
+
+    const projectDir = path.join(tmpWorkDir, projectName);
+    const envExample = fs.readFileSync(path.join(projectDir, '.env.example'), 'utf8');
+    assert.ok(envExample.includes('DATABASE_URL'), 'Should include DATABASE_URL');
+    assert.ok(envExample.includes('STRIPE_SECRET_KEY'), 'Should include STRIPE_SECRET_KEY');
+    assert.ok(envExample.includes('NEXTAUTH_SECRET'), 'Should include NEXTAUTH_SECRET');
+  });
+
+  test('saas with --git initializes a git repository', () => {
+    const projectName = 'my-saas-git';
+    const { output: stdout, exitCode } = runCLI(`saas ${projectName} --git`, { cwd: tmpWorkDir });
+    assert.equal(exitCode, 0, `CLI failed: ${stdout}`);
+
+    const projectDir = path.join(tmpWorkDir, projectName);
+    assert.ok(fs.existsSync(path.join(projectDir, '.git')), '.git directory should exist');
+  });
+
+  test('saas renames _gitignore to .gitignore', () => {
+    const projectName = 'my-saas-gitignore';
+    runCLI(`saas ${projectName}`, { cwd: tmpWorkDir });
+    const projectDir = path.join(tmpWorkDir, projectName);
+    assert.ok(fs.existsSync(path.join(projectDir, '.gitignore')), '.gitignore should exist');
+    assert.ok(!fs.existsSync(path.join(projectDir, '_gitignore')), '_gitignore should not remain');
+  });
+
+  test('saas fails if project folder already exists', () => {
+    const projectName = 'existing-saas-project';
+    fs.mkdirpSync(path.join(tmpWorkDir, projectName));
+    const { exitCode } = runCLI(`saas ${projectName}`, { cwd: tmpWorkDir });
+    assert.notEqual(exitCode, 0, 'Should fail when target directory already exists');
+  });
+
+  test('--help shows saas subcommand', () => {
+    const { output: stdout } = runCLI('--help');
+    assert.ok(stdout.includes('saas'), 'Expected "saas" in help output');
+  });
+});
