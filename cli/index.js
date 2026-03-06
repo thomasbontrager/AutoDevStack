@@ -196,6 +196,35 @@ build
 
 
 (async function main() {
+  // Parse CLI arguments
+  let flags, positionals;
+  try {
+    ({ values: flags, positionals } = parseArgs({
+      args: process.argv.slice(2),
+      options: {
+        stack:    { type: 'string',  short: 's' },
+        template: { type: 'string',  short: 't' },
+        ai:       { type: 'boolean' },
+        git:      { type: 'boolean' },
+        docker:   { type: 'boolean' },
+        help:     { type: 'boolean', short: 'h' },
+      },
+      allowPositionals: true,
+    }));
+  } catch (err) {
+    console.error(chalk.red(`\n❌ ${err.message}\n`));
+    printHelp();
+    process.exit(1);
+  }
+
+  if (flags.help) {
+    printHelp();
+    process.exit(0);
+  }
+
+  console.log(chalk.green.bold("\n🚀 Welcome to AutoDevStack! 🚀"));
+  console.log(chalk.gray("Scaffold your next project in seconds.\n"));
+
   try {
     const flags = parseArgs();
 
@@ -282,7 +311,7 @@ build
 
       // Rename _gitignore to .gitignore if present
       const gitignoreFrom = path.join(projectDir, '_gitignore');
-      const gitignoreTo = path.join(projectDir, '.gitignore');
+      const gitignoreTo   = path.join(projectDir, '.gitignore');
       if (fs.existsSync(gitignoreFrom)) {
         fs.moveSync(gitignoreFrom, gitignoreTo);
       }
