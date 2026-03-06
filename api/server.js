@@ -3,9 +3,13 @@ const express = require('express');
 const authRoutes = require('./routes/auth');
 const projectRoutes = require('./routes/projects');
 const deployRoutes = require('./routes/deploy');
+const billingRoutes = require('./routes/billing');
 
 const app = express();
 const PORT = process.env.PORT || 4000;
+
+// Stripe webhooks require the raw body — mount BEFORE express.json()
+app.use('/api/billing/webhook', express.raw({ type: 'application/json' }));
 
 app.use(express.json());
 
@@ -13,6 +17,7 @@ app.use(express.json());
 app.use('/api/auth', authRoutes);
 app.use('/api/projects', projectRoutes);
 app.use('/api/deploy', deployRoutes);
+app.use('/api/billing', billingRoutes);
 
 // Health check
 app.get('/api/health', (req, res) => {
